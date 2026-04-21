@@ -1,15 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock the GatewayClient constructor before any imports
-vi.mock('@circlefin/x402-batching/client', () => ({
-  GatewayClient: vi.fn().mockImplementation((config: any) => ({
-    ...config,
-    address: '0xmockBuyerAddress',
-    getBalances: vi.fn(),
-    deposit: vi.fn(),
-    pay: vi.fn(),
-  })),
-}));
+// Mock the GatewayClient constructor before any imports.
+// vitest 4 requires a spy wrapping a class so both `new Spy(cfg)` and
+// `expect(Spy).toHaveBeenCalledWith(...)` work together.
+vi.mock('@circlefin/x402-batching/client', () => {
+  const GatewayClient = vi.fn(function (
+    this: Record<string, unknown>,
+    config: { chain: string; privateKey: string },
+  ) {
+    this.address = '0xmockBuyerAddress';
+    this.chain = config.chain;
+    this.privateKey = config.privateKey;
+    this.getBalances = vi.fn();
+    this.deposit = vi.fn();
+    this.pay = vi.fn();
+  });
+  return { GatewayClient };
+});
 
 describe('getGatewayClient', () => {
   beforeEach(() => {
