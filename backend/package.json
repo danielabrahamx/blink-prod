@@ -19,6 +19,7 @@
     "migrate:status": "bun run scripts/migrate.ts status",
     "migrate:create": "bun run scripts/migrate.ts create",
     "db:seed": "bun run scripts/migrate.ts seed",
+    "migrate:settlement": "node src/db/migrate.cjs",
     "legacy:start": "node server.js"
   },
   "dependencies": {

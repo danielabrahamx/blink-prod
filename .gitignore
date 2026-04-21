@@ -60,3 +60,10 @@ typechain-types/
 tests/e2e/results/
 test-results/
 playwright-report/
+node_modules/
+dist/
+.env
+.env.local
+logs/
+*.log
+deployments/hardhat.json
