@@ -1,0 +1,28 @@
+{
+  "name": "@blink/electron",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "canonicalize": "^2.0.0",
+    "get-windows": "^9.2.0",
+    "node-wifi": "2.0.16",
+    "systeminformation": "^5.31.5",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "typescript": "^5.5.0",
+    "vitest": "^1.6.0"
+  }
+}
