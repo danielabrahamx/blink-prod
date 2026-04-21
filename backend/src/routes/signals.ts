@@ -1,16 +1,15 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { ingestEnvelope } from '../ingest/index.js';
-import { extractFeatures } from '../features/index.js';
-import { getRiskEngine } from '../risk/index.js';
-import { BadRequestError, NotImplementedError } from '../lib/errors.js';
+import { BadRequestError } from '../lib/errors.js';
 import { getContext } from '../lib/context.js';
-import { observeMultiplier, observeSignalLatency } from '../admin/metrics.js';
+import { observeSignalLatency } from '../admin/metrics.js';
 
 export function signalsRouter(): Router {
   const r = Router();
 
-  // POST /signals
+  // POST /signals — ingest and acknowledge. Scoring + multiplier emission
+  // happens downstream in the settlement accrual loop (feat/settlement-x402).
   r.post('/', async (req: Request, res: Response, next: NextFunction) => {
     const started = Date.now();
     try {
@@ -23,47 +22,14 @@ export function signalsRouter(): Router {
           devices: { byId: (id) => ctx.store.devices.byId(id) },
         },
       );
-
-      const policy = await ctx.store.policies.byId(
-        ingested.envelope.policy_id,
-      );
+      const policy = await ctx.store.policies.byId(ingested.envelope.policy_id);
       if (!policy) throw new BadRequestError('policy not found');
-
-      const features = extractFeatures({
-        envelope: ingested.envelope,
+      observeSignalLatency(Date.now() - started);
+      res.status(202).json({
+        accepted: true,
         ip_country: ingested.ip_country,
-        policy,
+        received_at: ingested.received_at,
       });
-
-      // Try to score; if risk engine is not installed yet (Agent E still
-      // building), we still return an accepted-with-unscored response so
-      // envelope ingest can be exercised end-to-end.
-      try {
-        const scored = getRiskEngine().score(features);
-        observeMultiplier(scored.multiplier);
-        observeSignalLatency(Date.now() - started);
-        res.json({
-          accepted: true,
-          features,
-          scored,
-          ip_country: ingested.ip_country,
-          received_at: ingested.received_at,
-        });
-      } catch (err) {
-        if (err instanceof NotImplementedError) {
-          observeSignalLatency(Date.now() - started);
-          res.status(202).json({
-            accepted: true,
-            scored: null,
-            features,
-            ip_country: ingested.ip_country,
-            received_at: ingested.received_at,
-            note: 'risk engine not installed (Agent E pending)',
-          });
-          return;
-        }
-        throw err;
-      }
     } catch (e) {
       next(e);
     }
