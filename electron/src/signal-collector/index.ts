@@ -11,7 +11,10 @@ export * from './idle';
 export * from './battery';
 export * from './envelope';
 export * from './offline-queue';
-export * from './collector';
+export { SignalCollector as SignalCollectorImpl, wireEventSources } from './collector';
+export type { CollectorOptions, Transport } from './collector';
+export { createSignalCollector } from './factory';
+export type { SignalCollector, SignalCollectorFacade } from './factory';
 export {
   SIGNAL_WHITELIST,
   CLIENT_SIGNAL_KEYS,

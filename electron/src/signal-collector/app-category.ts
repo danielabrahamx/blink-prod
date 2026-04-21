@@ -141,7 +141,10 @@ export async function sampleAppCategory(opts: SampleAppOptions): Promise<AppCate
   const table = opts.table ?? APP_CATEGORY_TABLE;
 
   const bundle = normalizeKey(result.owner?.bundleId);
-  if (bundle && table[bundle]) return table[bundle];
+  if (bundle) {
+    const hit = table[bundle];
+    if (hit) return hit;
+  }
 
   const path = result.owner?.path;
   let exec: string | null = null;
@@ -149,10 +152,16 @@ export async function sampleAppCategory(opts: SampleAppOptions): Promise<AppCate
     const base = path.split(/[\\/]/).pop();
     exec = normalizeKey(base);
   }
-  if (exec && table[exec]) return table[exec];
+  if (exec) {
+    const hit = table[exec];
+    if (hit) return hit;
+  }
 
   const name = normalizeKey(result.owner?.name);
-  if (name && table[name]) return table[name];
+  if (name) {
+    const hit = table[name];
+    if (hit) return hit;
+  }
 
   return 'unknown';
 }
