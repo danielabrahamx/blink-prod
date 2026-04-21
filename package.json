@@ -1,0 +1,33 @@
+{
+  "name": "blink",
+  "version": "0.1.0-dev",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "electron"
+  ],
+  "scripts": {
+    "test": "npx hardhat test",
+    "compile": "npx hardhat compile",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:api": "playwright test tests/e2e/api.spec.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Blink - per-second laptop micro-insurance on Arc testnet",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.0.2",
+    "@playwright/test": "^1.58.2",
+    "dotenv": "^16.5.0",
+    "ethers": "^6.14.0",
+    "hardhat": "^2.24.0"
+  },
+  "dependencies": {
+    "@chainlink/contracts": "^1.2.0"
+  }
+}

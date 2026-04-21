@@ -1,0 +1,13 @@
+[build]
+  base    = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[context.production.environment]
+  VITE_DEMO_MODE = "true"
+
+[context.deploy-preview.environment]
+  VITE_DEMO_MODE = "true"
+
+[context.branch-deploy.environment]
+  VITE_DEMO_MODE = "true"

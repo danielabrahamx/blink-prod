@@ -1,0 +1,99 @@
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 3.1%;
+    --foreground: 0 0% 94.1%;
+
+    --card: 0 0% 5.5%;
+    --card-foreground: 0 0% 94.1%;
+
+    --popover: 0 0% 5.5%;
+    --popover-foreground: 0 0% 94.1%;
+
+    --primary: 38 85% 51%;
+    --primary-foreground: 0 0% 3.1%;
+
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 94.1%;
+
+    --muted: 0 0% 10%;
+    --muted-foreground: 0 0% 53.3%;
+
+    --accent: 38 85% 51%;
+    --accent-foreground: 0 0% 3.1%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 94.1%;
+
+    --border: 0 0% 11.8%;
+    --input: 0 0% 11.8%;
+    --ring: 38 85% 51%;
+
+    --radius: 0rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    background-color: #080808;
+  }
+
+  body {
+    @apply bg-[#080808] text-[#f0f0f0];
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Remove focus ring default */
+  *:focus-visible {
+    outline: 1px solid #e8a020;
+    outline-offset: 1px;
+  }
+}
+
+/* Font utility classes */
+.font-bebas {
+  font-family: 'Bebas Neue', sans-serif;
+  letter-spacing: 0.05em;
+}
+
+.font-dm-mono {
+  font-family: 'DM Mono', monospace;
+}
+
+.font-dm-sans {
+  font-family: 'DM Sans', sans-serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #0e0e0e;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
+
+/* Live pulse */
+@keyframes blink-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.blink-pulse {
+  animation: blink-pulse 1.2s ease-in-out infinite;
+}
