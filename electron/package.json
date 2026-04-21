@@ -1,0 +1,22 @@
+{
+  "name": "blink-electron",
+  "version": "0.1.0-dev",
+  "description": "Blink Electron agent — signal collector + x402 auto-signer",
+  "main": "dist/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@circlefin/x402-batching": "^1.0.5",
+    "ethers": "^6.9.0",
+    "viem": "^2.46.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  }
+}
