@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "package:win": "electron-vite build && electron-builder --win --x64 --publish=never",
     "clean": "rimraf out dist-installer",
     "postinstall": "electron-builder install-app-deps"
@@ -21,17 +22,24 @@
   "dependencies": {
     "@noble/ed25519": "^2.1.0",
     "@noble/hashes": "^1.5.0",
+    "better-sqlite3": "^11.5.0",
+    "canonicalize": "^2.0.0",
     "electron-store": "^10.0.0",
     "electron-updater": "^6.3.9",
+    "get-windows": "^9.2.0",
     "keytar": "^7.9.0",
+    "node-wifi": "2.0.16",
     "pino": "^9.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "systeminformation": "^5.31.5",
+    "tweetnacl": "^1.0.3",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.0.1",
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.5.5",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
