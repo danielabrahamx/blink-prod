@@ -1,0 +1,19 @@
+/* Electron-specific overrides layered on top of the shared frontend
+   stylesheet. Keep this minimal -- the source-of-truth theme lives in
+   `frontend/src/index.css` per Module 7 (Design Language Constraint). */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  /* Match the frontend dark palette so the Electron chrome does not flash
+     white during first paint. */
+  background: #0a0a0a;
+  color: #fafafa;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

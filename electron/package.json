@@ -1,0 +1,51 @@
+{
+  "name": "blink-electron",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "module",
+  "description": "Blink desktop shell - Windows-first Electron host for the signal agent, session key, and auto-signer.",
+  "main": "out/main/index.js",
+  "author": "Blink",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:win": "electron-vite build && electron-builder --win --x64 --publish=never",
+    "clean": "rimraf out dist-installer",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.1.0",
+    "@noble/hashes": "^1.5.0",
+    "electron-store": "^10.0.0",
+    "electron-updater": "^6.3.9",
+    "keytar": "^7.9.0",
+    "pino": "^9.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/react": "^16.0.1",
+    "@types/node": "^22.5.5",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "@vitest/coverage-v8": "^2.1.2",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-rebuild": "^3.2.9",
+    "electron-vite": "^2.3.0",
+    "jsdom": "^25.0.1",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.8",
+    "vite-plugin-node-polyfills": "^0.25.0",
+    "vitest": "^2.1.2"
+  }
+}
