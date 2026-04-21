@@ -9,3 +9,5 @@ coverage/
 .env
 .env.local
 resources/icon.ico
+electron/dist-installer/
+electron/out/
