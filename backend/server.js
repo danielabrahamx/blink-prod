@@ -46,8 +46,13 @@ let totalReserveUsyc = 0;
 // Middleware
 app.use(cors({
   exposedHeaders: ['PAYMENT-REQUIRED', 'PAYMENT-RESPONSE'],
+  allowedHeaders: ['Content-Type', 'X-Admin-Wallet'],
 }));
 app.use(express.json());
+
+// --- Admin portal routes (Module 5) ---
+const { createAdminRouter } = require('./src/admin');
+app.use('/admin', createAdminRouter());
 
 // --- x402 Gateway Middleware ---
 const gateway = createGatewayMiddleware({
