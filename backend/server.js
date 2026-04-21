@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { ethers } = require('ethers');
 const { createGatewayMiddleware } = require('@circlefin/x402-batching/server');
+const { createClaimsRouter } = require('./src/claims');
 require('dotenv').config();
 
 const app = express();
@@ -234,6 +235,41 @@ app.post('/api/admin/trigger-claim', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// --- Claims v1 router ---
+// Uses the in-memory repository by default. The reserveClient is wired to
+// the live Circle USDC transfer here; tests inject a mock BlinkReserve
+// adapter instead. See backend/src/claims/payout.ts for the interface.
+const liveReserveClient = {
+  async transferPayout({ claimId, recipientAddress, amountUsdc }) {
+    try {
+      const { initiateDeveloperControlledWalletsClient } = require('@circle-fin/developer-controlled-wallets');
+      const circleClient = initiateDeveloperControlledWalletsClient({
+        apiKey: process.env.CIRCLE_API_KEY,
+        entitySecret: process.env.CIRCLE_ENTITY_SECRET,
+      });
+      const amountUnits = BigInt(Math.round(amountUsdc * 1e6)).toString();
+      const tx = await circleClient.createContractExecutionTransaction({
+        walletId: process.env.CIRCLE_WALLET_ID,
+        contractAddress: USDC_ADDRESS,
+        abiFunctionSignature: 'transfer(address,uint256)',
+        abiParameters: [recipientAddress, amountUnits],
+        fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
+        refId: claimId,
+      });
+      return { success: true, txHash: tx.data && tx.data.id, network: 'arc-testnet' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+};
+
+app.use(
+  '/claims',
+  createClaimsRouter({
+    reserveClient: liveReserveClient,
+  })
+);
 
 // Start the server
 async function startServer() {

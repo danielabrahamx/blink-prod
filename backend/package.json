@@ -4,8 +4,11 @@
   "description": "Backend service for Blink per-second laptop micro-insurance with x402 nanopayments",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node --import tsx/esm server.js",
+    "start:plain": "node server.js",
+    "dev": "nodemon --exec \"node --import tsx/esm server.js\"",
+    "test": "bun test src/claims/__tests__",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^9.2.0",
@@ -16,9 +19,19 @@
     "dotenv": "^16.3.1",
     "ethers": "^6.9.0",
     "express": "^4.18.2",
-    "viem": "^2.46.3"
+    "multer": "^1.4.5-lts.1",
+    "viem": "^2.46.3",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^22.5.5",
+    "@types/supertest": "^6.0.2",
+    "nodemon": "^3.0.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.3"
   }
 }
