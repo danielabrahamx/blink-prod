@@ -3,11 +3,21 @@
   command = "npm run build"
   publish = "dist"
 
+# Real-mode public deploy: the frontend talks to the Fly-hosted backend
+# at the URL below for x402 streaming and admin reads. Simulation mode is
+# off by default; set VITE_DEMO_MODE=true in the Netlify UI for any branch
+# you want to flip back to client-only fakes.
 [context.production.environment]
-  VITE_DEMO_MODE = "true"
+  VITE_BACKEND_URL = "https://blink-prod-backend.fly.dev"
 
 [context.deploy-preview.environment]
-  VITE_DEMO_MODE = "true"
+  VITE_BACKEND_URL = "https://blink-prod-backend.fly.dev"
 
 [context.branch-deploy.environment]
-  VITE_DEMO_MODE = "true"
+  VITE_BACKEND_URL = "https://blink-prod-backend.fly.dev"
+
+# VITE_BUYER_PRIVATE_KEY is required for real-mode policy buys but is NOT
+# committed here. Set it in the Netlify UI (Site settings -> Environment
+# variables). Keep that wallet topped up with only a small testnet float
+# (a few USDC); the key ships in the public bundle and any visitor can
+# trigger spend up to whatever the wallet holds.

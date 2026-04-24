@@ -2,7 +2,7 @@
 # Run `flyctl launch --no-deploy` from the backend/ directory on first setup
 # so flyctl can pick a unique app name; it will edit the `app` field below.
 
-app = "blink-backend"
+app = "blink-prod-backend"
 primary_region = "lhr"
 
 [build]
