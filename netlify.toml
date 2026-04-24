@@ -9,12 +9,15 @@
 # you want to flip back to client-only fakes.
 [context.production.environment]
   VITE_BACKEND_URL = "https://blink-prod-backend.fly.dev"
+  VITE_RPC_URL     = "https://rpc.testnet.arc.network"
 
 [context.deploy-preview.environment]
   VITE_BACKEND_URL = "https://blink-prod-backend.fly.dev"
+  VITE_RPC_URL     = "https://rpc.testnet.arc.network"
 
 [context.branch-deploy.environment]
   VITE_BACKEND_URL = "https://blink-prod-backend.fly.dev"
+  VITE_RPC_URL     = "https://rpc.testnet.arc.network"
 
 # VITE_BUYER_PRIVATE_KEY is required for real-mode policy buys but is NOT
 # committed here. Set it in the Netlify UI (Site settings -> Environment
