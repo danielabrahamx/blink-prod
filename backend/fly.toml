@@ -1,0 +1,32 @@
+# Fly.io config for the Blink backend.
+# Run `flyctl launch --no-deploy` from the backend/ directory on first setup
+# so flyctl can pick a unique app name; it will edit the `app` field below.
+
+app = "blink-prod-backend"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  ARC_RPC_URL = "https://rpc.testnet.arc.network"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
