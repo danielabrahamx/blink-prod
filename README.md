@@ -1,170 +1,217 @@
-# Blink - Per-Second Laptop Insurance
+# Blink — Per-Second Laptop Insurance
 
-> Gasless micro-insurance for laptops, paid by the second using x402 on Arc Testnet.
+Per-second laptop insurance on **Arc Testnet** (chainId `5042002`).
+Customer buys a policy, streams USDC per second while covered, and pays
+premiums into a USYC-backed reserve — all settled on-chain.
 
-Built for the **Circle Hackathon** · Arc Testnet · x402 Protocol · Circle Developer-Controlled Wallets
+**Stack:** React + Vite frontend, Node/Express backend, Circle
+x402-batching for per-second streaming, Circle Developer-Controlled
+Wallets for reserve management.
 
----
+The repo has two run modes, toggled by `VITE_DEMO_MODE`:
 
-## What It Does
+- **Real mode** (unset) — what this README describes. Runs locally
+  against the live Arc Testnet contract with a local backend on
+  `:3001`.
+- **Simulation mode** (`VITE_DEMO_MODE=true`) — no backend, everything
+  faked client-side in `frontend/src/lib/simulationClient.ts`. This is
+  what Netlify builds and what the public demo URL serves.
 
-Blink lets anyone insure their laptop **by the second** - no sign-up, no annual premium, no paperwork. You pay only for the exact seconds you're covered.
-
-| Mode | Rate | Use case |
-|------|------|----------|
-| **At Desk** | $0.000005 / second | Laptop in use, user present |
-| **Away** | $0.00001 / second | Laptop unattended or in transit |
-
-Every second of coverage is a real USDC micropayment over the **x402 protocol** on Arc Testnet. The insurance reserve pool is managed by the admin via **Circle Developer-Controlled Wallets**.
-
----
-
-
-## Screenshots
-
-<div align="center">
-  <img src="docs/screenshots/landing-page.png" alt="Landing Page" style="border: 1px solid #333; border-radius: 8px; margin-bottom: 20px;" />
-</div>
-
-<div align="center">
-  <img src="docs/screenshots/policy-active.png" width="48%" alt="Policy Running" style="border: 1px solid #333; border-radius: 8px; margin-right: 2%; margin-bottom: 20px;" />
-  <img src="docs/screenshots/policy-complete.png" width="48%" alt="Policy Complete" style="border: 1px solid #333; border-radius: 8px; margin-bottom: 20px;" />
-</div>
-<div align="center">
-  <em>Real-time 5-second streaming policy via x402 gateway</em>
-</div>
-<br />
-
-<div align="center">
-  <img src="docs/screenshots/admin-portal.png" alt="Admin Portal" style="border: 1px solid #333; border-radius: 8px; margin-bottom: 20px;" />
-  <p><em>Admin Portal - Staking USYC reserves and managing claims via Circle Developer Wallets</em></p>
-</div>
-
----
-
-## How It Works
+## Architecture at a glance
 
 ```
-User                          Backend (x402)             Circle Dev Wallet
- │                                 │                            │
- ├── deposit USDC to gateway ─────►│                            │
- │                                 │                            │
- ├── start policy (5s at desk) ───►│                            │
- │   ┌─ per-second payment loop ──►│                            │
- │   │  $0.000005 x402 payment/sec  │ verifies + settles         │
- │   └─ repeat for N seconds       │                            │
- │                                 │                            │
- └── policy complete               │                            │
-                                   │                            │
-Admin                              │                            │
- ├── deposit & stake USYC reserve ──────────────────────────────►│
- └── trigger claim payout ─────────────────────────────────────►│ USDC → user
+┌─────────────┐   per-second USDC        ┌──────────────┐
+│  Customer   │ ───────────────────────▶ │   Seller     │
+│  /live      │   via Circle Gateway     │  wallet      │
+│             │   (x402 batching)        │   (= the     │
+│             │                          │    pool)     │
+│             │   policy premium (USDC)  │              │
+│             │ ───────────────────────▶ │              │
+└─────────────┘                          └──────────────┘
+                                                │
+                                                │ USYC reserve
+                                                ▼
+                                         ┌──────────────┐
+                                         │ Blink        │
+                                         │ contract     │
+                                         │ (Arc)        │
+                                         └──────────────┘
 ```
 
-1. **User** deposits USDC into their x402 Gateway wallet
-2. They select a mode (At Desk / Away), set a duration, and click **Start Policy**
-3. Every second, the frontend fires a paid request to the backend - each request is a self-contained x402 micropayment
-4. **Admin** deposits USYC into the reserve pool (which they have the ability to stake) and triggers USDC claim payouts for verified losses
+The **seller wallet is the pool** — one source of truth. Every policy
+premium and every per-second streaming charge settles there. USYC
+reserve backing is held by the Blink contract and funded from the
+seller's DCV wallet.
 
----
+## Run locally
 
-## Stack
-
-| Layer | Tech |
-|-------|------|
-| Frontend | React 18 + Vite + TypeScript + Tailwind CSS |
-| Micropayments | x402 protocol via `@circlefin/x402-batching` |
-| Backend | Node.js + Express |
-| Reserve wallets | Circle Developer-Controlled Wallets |
-| Network | Arc Testnet (EVM, chainId `5042002`) |
-| Tokens | USDC (`0x360...`) · USYC (`0xe91...`) |
-
----
-
-## Demo
-
-### Prerequisites
-
-- Node.js 18+
-- `backend/.env` configured (copy from `.env.example`)
-
-### 1. Start the backend
+Two terminals:
 
 ```bash
+# terminal 1 — backend on :3001
 cd backend
 npm install
-node server.js
-# → http://localhost:3001
+cp .env.example .env   # then fill in Circle creds + addresses
+npm start
+
+# terminal 2 — frontend (defaults to :8080, falls back to :8081)
+cd frontend
+bun install            # or: npm install
+bun run dev
 ```
 
-### 2. Start the frontend
+Visit http://localhost:8080:
+
+- `/` — landing + email gate
+- `/set-home` — set your home base (lat/lng)
+- `/live` — customer policy flow
+- `/admin` — seller pool dashboard
+
+## Env config
+
+### `backend/.env`
+
+```env
+PORT=3001
+ARC_RPC_URL=https://rpc.testnet.arc.network
+BLINK_CONTRACT_ADDRESS=0xFC1EfCE3D25E7eE5535E7E6D6731D9Ba131bDC43
+CIRCLE_API_KEY=...                    # Circle DCV API key
+CIRCLE_ENTITY_SECRET=...              # Circle DCV entity secret
+CIRCLE_WALLET_ID=...                  # DCV wallet ID for admin ops
+CIRCLE_WALLET_ADDRESS=0x...           # Seller wallet address
+```
+
+### `frontend/.env`
+
+```env
+VITE_BACKEND_URL=http://localhost:3001
+VITE_RPC_URL=https://rpc.testnet.arc.network
+VITE_SELLER_ADDRESS=0x...             # seller wallet (= the pool)
+VITE_BUYER_PRIVATE_KEY=0x...          # buyer key for demo policy buys
+VITE_BLINK_CONTRACT_ADDRESS=0xFC1EfCE3D25E7eE5535E7E6D6731D9Ba131bDC43
+```
+
+## Customer flow (`/live`)
+
+1. **Enter laptop value** in USD (e.g. $1,500). Used as metadata for
+   the on-chain policy; no actuarial pricing is displayed.
+2. **Pick policy length** — slider, 1 hour to 30 days.
+3. Click **Activate cover**. One `buyInsurance` tx on the Blink contract
+   moves a premium from the buyer's USDC wallet into the seller pool.
+   First buy also does a one-time `approve(MaxUint256)` so every
+   subsequent policy buy is a single tx.
+4. During the session, each tick routes a µUSDC payment through Circle
+   Gateway to the seller wallet via the rate-matched endpoint
+   (`/api/insure/home-charging`, `…/away-battery`, etc).
+5. At the end of the session, `/api/settle` posts a summary and
+   surfaces the `txId` + per-band breakdown.
+
+## Rating model
+
+Two compounding factors:
+
+**Location band** (haversine distance to home, with international-IP
+override):
+
+| Band   | Trigger                              | Rate (µUSDC/sec) |
+|--------|--------------------------------------|------------------|
+| `home` | within 2 m of home                   | 3                |
+| `near` | 2 m – 5 m                            | 4                |
+| `away` | > 5 m, or IP country ≠ home country  | 6                |
+
+Demo-scale thresholds (metres) so the away band is reachable by walking
+a few paces. 1 m hysteresis prevents flicker; outdoor GPS is typically
+3–10 m accurate.
+
+**Charging state** (multiplies the band rate):
+
+| State       | Factor |
+|-------------|--------|
+| Plugged in  | 1.00×  |
+| On battery  | 2.00×  |
+| Unknown     | 1.00×  |
+
+Compounding: `home + on battery` = 6 µUSDC/sec, `away + on battery`
+= 12 µUSDC/sec.
+
+All accrual is integer µUSDC (USDC's 6-decimal floor). USD values are
+display only — nothing settles in fiat.
+
+## Admin flow (`/admin`)
+
+- **Seller wallet** card — the pool address + DCV wallet ID
+- **Seller pool · on-chain** — live Arc RPC reads of the seller's USDC
+  and USYC balances (polled every 10s)
+- **Circle Gateway / DCV balances** — server-side Circle API view
+  (reserved / spendable)
+- **Top up USYC reserve** — approves the Blink contract, then calls
+  `depositReserve(amount)` signed by the Circle DCV wallet
+- **Recent x402 receipts** — last N per-second charges from
+  `/api/health` (refreshed every 5s), with total premiums in USDC
+
+## Backend routes
+
+| Method | Path                               | Billing   | Purpose                          |
+|--------|------------------------------------|-----------|----------------------------------|
+| GET    | `/api/insure/home-charging`        | 3 µUSDC   | Per-sec charge, home, plugged    |
+| GET    | `/api/insure/home-battery`         | 6 µUSDC   | Per-sec charge, home, unplugged  |
+| GET    | `/api/insure/near-charging`        | 4 µUSDC   | Per-sec charge, near, plugged    |
+| GET    | `/api/insure/near-battery`         | 8 µUSDC   | Per-sec charge, near, unplugged  |
+| GET    | `/api/insure/away-charging`        | 6 µUSDC   | Per-sec charge, away, plugged    |
+| GET    | `/api/insure/away-battery`         | 12 µUSDC  | Per-sec charge, away, unplugged  |
+| GET    | `/api/insure/idle`                 | 1 µUSDC   | Idle fallback                    |
+| GET    | `/api/health`                      | free      | Uptime + recent tx receipts      |
+| GET    | `/api/status`                      | free      | Pool/contract state snapshot     |
+| POST   | `/api/settle`                      | free      | Session settlement summary       |
+| GET    | `/api/admin/balance/{address}`     | free      | USDC + USYC via Arc RPC          |
+| GET    | `/api/admin/wallet-balance`        | free      | Circle DCV wallet balances       |
+| POST   | `/api/admin/deposit-reserve`       | free      | Top up USYC reserve via DCV      |
+
+## Tests
 
 ```bash
 cd frontend
-npm install
-npm run dev
-# → http://localhost:5173 (or next available port)
+bun run test
 ```
 
-### 3. Demo flow
+Unit coverage lives in `frontend/src/lib/**/__tests__` (rulebook,
+battery, geolocation, homeSpawn) and `frontend/src/pages/__tests__`
+(LiveDemo).
 
-1. Open the app → click **User Portal**
-2. Click **Deposit 1 USDC to Gateway** to fund your gateway wallet
-3. Set duration (e.g. 5 seconds), choose At Desk or Away mode
-4. Click **Start Policy** - watch per-second payments stream in real time with live balance updates
-5. Copy your buyer address, switch to **Admin Portal**, paste into "Trigger Claim Payout" to send USDC back as a claim
+## Key files
 
----
+- `frontend/src/pages/LiveDemo.tsx` — customer policy flow + live session
+- `frontend/src/pages/Admin.tsx` — seller pool dashboard
+- `frontend/src/lib/blinkContract.ts` — `buyInsurance` / `hasActivePolicy`
+  against the Blink contract
+- `frontend/src/lib/gatewayClient.ts` — chooses real Circle Gateway vs
+  simulation
+- `frontend/src/lib/simulationClient.ts` — demo-mode fake gateway
+- `frontend/src/lib/rulebookV2.ts` — location band + charging scorer
+- `backend/server.js` — Express + x402-batching middleware + admin routes
+- `backend/blink-contract-abi.json` — compiled ABI for the Blink contract
+- `netlify.toml` — flips `VITE_DEMO_MODE=true` in production
 
-## API Endpoints
+## Tokens & contracts (Arc Testnet)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/api/health` | - | Service health check |
-| `GET` | `/api/status` | - | Contract pool balances |
-| `GET` | `/api/insure/active` | x402 $0.000005 | At-desk coverage tick |
-| `GET` | `/api/insure/idle` | x402 $0.00001 | Away coverage tick |
-| `GET` | `/api/balance/:address` | - | USDC + USYC balance |
-| `POST` | `/api/admin/deposit-reserve` | - | Deposit USYC to reserve |
-| `POST` | `/api/admin/trigger-claim` | - | Send USDC claim to user |
+| Thing                  | Address                                      |
+|------------------------|----------------------------------------------|
+| USDC                   | `0x3600000000000000000000000000000000000000` |
+| USYC                   | `0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C` |
+| Blink contract         | `0xFC1EfCE3D25E7eE5535E7E6D6731D9Ba131bDC43` |
 
----
+The current contract address + ABI are live on Arc Testnet and valid
+as-is. A clean redeploy under a new name would require a new deployment
+and address update; not needed for the current build.
 
-## Environment Variables
+## Deploying the simulation build
 
-```env
-# backend/.env
-PORT=3001
-ARC_RPC_URL=https://rpc.testnet.arc.network
-BLINKRESERVE_ADDRESS=<deployed contract>
+Netlify auto-builds `frontend/` on pushes. `netlify.toml` sets
+`VITE_DEMO_MODE=true` for production, deploy-preview, and branch-deploy
+contexts, so every preview URL ships the simulation experience. No
+backend is deployed; the public demo never transacts for real.
 
-CIRCLE_API_KEY=<your key>
-CIRCLE_ENTITY_SECRET=<your secret>
-CIRCLE_WALLET_ID=<wallet id>
-CIRCLE_WALLET_ADDRESS=<wallet address>
-```
-
----
-
-## Project Structure
-
-```
-BlinkReserve-Hedera/
-├── backend/
-│   └── server.js                        # Express + x402 gateway middleware
-├── frontend/
-│   └── src/
-│       ├── InsuracleDashboard.tsx        # User portal (buy per-second coverage)
-│       ├── InsuracleDashboardAdmin.tsx   # Admin portal (reserves + claims)
-│       └── lib/
-│           └── gatewayClient.ts          # x402 Gateway client wrapper
-├── contracts/                           # Solidity reserve pool
-├── scripts/                             # Deployment + funding helpers
-└── .env.example
-```
-
----
-
-## License
-
-MIT
+Promoting real-mode to a public URL is a non-trivial checklist — host
+the backend, move `VITE_BUYER_PRIVATE_KEY` off the bundle, add
+per-session spend caps, and flip `VITE_DEMO_MODE=false`. See
+`CLAUDE.md` for the full checklist.

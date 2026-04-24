@@ -7,6 +7,10 @@ electron/node_modules/
 # Local install artefacts (see docs/DEVIATIONS.md section 4)
 electron/package-lock.json
 
+# v2 retired electron tree — source deleted from git on v2-browser-demo;
+# leftover dist-installer and caches stay on disk. Ignore entirely.
+electron/
+
 # Build outputs
 dist/
 build/
@@ -18,7 +22,17 @@ coverage/
 .env
 .env.local
 .env.production
+.env.bak
+*.env.bak
 backend/.env
+backend/.env.bak
+frontend/.env.bak
+
+# Local demo artefacts + binary data (never commit)
+backend/data/
+scripts/*.out
+scripts/demo-tx-log.json
+.claude/settings.local.json
 
 # Logs
 *.log

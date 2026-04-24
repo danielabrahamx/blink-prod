@@ -1,310 +1,292 @@
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const { ethers } = require('ethers');
 const { createGatewayMiddleware } = require('@circlefin/x402-batching/server');
-const { createClaimsRouter } = require('./src/claims');
+const blinkContractArtifact = require('./blink-contract-abi.json');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Contract addresses
-const BLINKRESERVE_ADDRESS = process.env.BLINKRESERVE_ADDRESS;
+// Backward-compat: accept the legacy BLINK_CONTRACT_ADDRESS env var if present so
+// existing local .env files keep working until operators cut over.
+const BLINK_CONTRACT_ADDRESS =
+  process.env.BLINK_CONTRACT_ADDRESS || process.env.PARAMIFY_ADDRESS;
 const ARC_RPC_URL = process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.network';
+const BLINK_CONTRACT_ABI = blinkContractArtifact.abi || blinkContractArtifact;
 
-// Token addresses (Arc Testnet)
+// Arc Testnet token addresses (used by /api/admin/* routes)
 const USDC_ADDRESS = '0x3600000000000000000000000000000000000000';
 const USYC_ADDRESS = '0xe9185F0c5F296Ed1797AaE4238D26CCaBEadb86C';
+const ERC20_BALANCE_ABI = ['function balanceOf(address) view returns (uint256)'];
 
-const ERC20_ABI = [
-  'function balanceOf(address) view returns (uint256)',
-  'function allowance(address owner, address spender) view returns (uint256)',
-  'function transfer(address to, uint256 amount) returns (bool)',
-];
-
-// BlinkReserve ABI (pool/reserve reads for admin dashboard)
-const BLINKRESERVE_ABI = [
-  {
-    "inputs": [],
-    "name": "usdcPool",
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "usycReserve",
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "view",
-    "type": "function"
+// Lazy-init Circle Developer-Controlled Wallets client. Keeps server boot
+// unblocked if CIRCLE_API_KEY / CIRCLE_ENTITY_SECRET are missing; errors
+// surface only when an admin route is actually called.
+let circleClient = null;
+function getCircleClient() {
+  if (circleClient) return circleClient;
+  const apiKey = process.env.CIRCLE_API_KEY;
+  const entitySecret = process.env.CIRCLE_ENTITY_SECRET;
+  if (!apiKey || !entitySecret) {
+    throw new Error('Circle DCV not configured (missing CIRCLE_API_KEY or CIRCLE_ENTITY_SECRET)');
   }
-];
+  const { initiateDeveloperControlledWalletsClient } = require('@circle-fin/developer-controlled-wallets');
+  circleClient = initiateDeveloperControlledWalletsClient({ apiKey, entitySecret });
+  return circleClient;
+}
 
 // In-memory accumulators (demo state)
 let totalPremiumsUsdc = 0;
-let totalReserveUsyc = 0;
+const lastTxs = [];
+const TX_CAP = 100;
+
+function recordTx(entry) {
+  lastTxs.push(entry);
+  if (lastTxs.length > TX_CAP) lastTxs.shift();
+}
+
+function randomHex(bytes) {
+  return crypto.randomBytes(bytes).toString('hex');
+}
 
 // Middleware
 app.use(cors({
   exposedHeaders: ['PAYMENT-REQUIRED', 'PAYMENT-RESPONSE'],
-  allowedHeaders: ['Content-Type', 'X-Admin-Wallet'],
 }));
 app.use(express.json());
 
-// --- Admin portal routes (Module 5) ---
-const { createAdminRouter } = require('./src/admin');
-app.use('/admin', createAdminRouter());
-
-// --- x402 Gateway Middleware ---
+// --- x402 Gateway ---
 const gateway = createGatewayMiddleware({
   sellerAddress: process.env.CIRCLE_WALLET_ADDRESS,
   networks: ['eip155:5042002'], // Arc Testnet only
 });
 
-// --- x402 Paid Endpoints ---
+// --- Billed route definitions (band, charging, priceStr, priceUsdc) ---
+const BILLED = [
+  { path: '/api/insure/home-charging',  band: 'home',  charging: true,  price: '$0.000003',  priceUsdc: 0.000003  },
+  { path: '/api/insure/home-battery',   band: 'home',  charging: false, price: '$0.000006',  priceUsdc: 0.000006  },
+  { path: '/api/insure/near-charging',  band: 'near',  charging: true,  price: '$0.000004',  priceUsdc: 0.000004  },
+  { path: '/api/insure/near-battery',   band: 'near',  charging: false, price: '$0.000008',  priceUsdc: 0.000008  },
+  { path: '/api/insure/away-charging',  band: 'away',  charging: true,  price: '$0.000006',  priceUsdc: 0.000006  },
+  { path: '/api/insure/away-battery',   band: 'away',  charging: false, price: '$0.000012',  priceUsdc: 0.000012  },
+  { path: '/api/insure/idle',           band: 'idle',  charging: false, price: '$0.00001',   priceUsdc: 0.00001   },
+];
 
-// GET /api/insure/active - per-second active-use laptop insurance ($0.000005/s)
-app.get('/api/insure/active', gateway.require('$0.000005'), (req, res) => {
-  totalPremiumsUsdc += 0.000005;
-  res.json({
-    covered: true,
-    mode: 'active',
-    timestamp: new Date().toISOString(),
-    duration: '1s',
-    payer: req.payment?.payer,
-    amount: req.payment?.amount,
-    network: req.payment?.network,
-    transaction: req.payment?.transaction,
+for (const route of BILLED) {
+  app.get(route.path, gateway.require(route.price), (req, res) => {
+    totalPremiumsUsdc += route.priceUsdc;
+    const premiumMicroUsdc = Math.round(route.priceUsdc * 1e6);
+    const payload = {
+      ok: true,
+      band: route.band,
+      charging: route.charging,
+      premiumMicroUsdc,
+      txPayer: req.payment?.payer,
+      txAmount: req.payment?.amount,
+      network: req.payment?.network,
+      txHash: req.payment?.transaction,
+    };
+    recordTx({
+      ...payload,
+      path: route.path,
+      timestamp: new Date().toISOString(),
+    });
+    res.json(payload);
   });
-});
+}
 
-// GET /api/insure/idle - per-second idle/stored laptop insurance ($0.00001/s)
-app.get('/api/insure/idle', gateway.require('$0.00001'), (req, res) => {
-  totalPremiumsUsdc += 0.00001;
-  res.json({
-    covered: true,
-    mode: 'idle',
-    timestamp: new Date().toISOString(),
-    duration: '1s',
-    payer: req.payment?.payer,
-    amount: req.payment?.amount,
-    network: req.payment?.network,
-    transaction: req.payment?.transaction,
-  });
-});
-
-// --- Standard Endpoints ---
+// --- Unbilled routes ---
 
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    message: 'Blink backend service is running',
-    timestamp: new Date().toISOString()
+    uptime: process.uptime(),
+    totalPremiumsUsdc: Number(totalPremiumsUsdc.toFixed(6)),
+    lastTxs,
   });
 });
 
 app.get('/api/status', async (req, res) => {
+  const sellerAddress = process.env.CIRCLE_WALLET_ADDRESS || null;
   try {
-    let poolData = null;
-    try {
-      const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
-      const blinkReserveContract = new ethers.Contract(BLINKRESERVE_ADDRESS, BLINKRESERVE_ABI, provider);
-      const [usdcPool, usycReserve] = await Promise.all([
-        blinkReserveContract.usdcPool(),
-        blinkReserveContract.usycReserve(),
-      ]);
-      poolData = {
-        contractUsdcPool: ethers.formatUnits(usdcPool, 6),
-        contractUsycReserve: ethers.formatUnits(usycReserve, 6),
-      };
-    } catch (error) {
-      console.warn('Could not fetch contract data:', error.message);
-    }
-
+    const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
+    const contract = new ethers.Contract(BLINK_CONTRACT_ADDRESS, BLINK_CONTRACT_ABI, provider);
+    const [usdcPool, usycReserve] = await Promise.all([
+      contract.usdcPool(),
+      contract.usycReserve(),
+    ]);
+    const usdcPoolFormatted = ethers.formatUnits(usdcPool, 6);
+    const usycReserveFormatted = ethers.formatUnits(usycReserve, 6);
     res.json({
-      service: 'active',
-      sellerAddress: process.env.CIRCLE_WALLET_ADDRESS,
-      network: 'eip155:5042002',
-      contractUsdcPool: totalPremiumsUsdc.toFixed(6),
-      contractUsycReserve: totalReserveUsyc.toFixed(6),
+      sellerAddress,
+      contractUsdcPool: usdcPoolFormatted,
+      contractUsycReserve: usycReserveFormatted,
+      usdcPool: usdcPoolFormatted,
+      usycReserve: usycReserveFormatted,
+      txCount: lastTxs.length,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.json({
+      error: error.message,
+      sellerAddress,
+      contractUsdcPool: null,
+      contractUsycReserve: null,
+      usdcPool: null,
+      usycReserve: null,
+      txCount: lastTxs.length,
+    });
   }
 });
 
-// GET /api/balance/:address - returns USDC and USYC balances for any address
+// GET /api/balance/:address - convenience alias for the admin portal
 app.get('/api/balance/:address', async (req, res) => {
   try {
     const { address } = req.params;
     if (!ethers.isAddress(address)) {
       return res.status(400).json({ error: 'Invalid address' });
     }
-
-    // Use Circle API for the admin wallet (RPC USDC precompile doesn't support balanceOf)
-    const { initiateDeveloperControlledWalletsClient } = require('@circle-fin/developer-controlled-wallets');
-    const circleClient = initiateDeveloperControlledWalletsClient({
-      apiKey: process.env.CIRCLE_API_KEY,
-      entitySecret: process.env.CIRCLE_ENTITY_SECRET,
+    const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
+    const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_BALANCE_ABI, provider);
+    const usyc = new ethers.Contract(USYC_ADDRESS, ERC20_BALANCE_ABI, provider);
+    const [usdcBal, usycBal] = await Promise.all([
+      usdc.balanceOf(address).catch(() => 0n),
+      usyc.balanceOf(address).catch(() => 0n),
+    ]);
+    res.json({
+      address,
+      usdc: ethers.formatUnits(usdcBal, 6),
+      usyc: ethers.formatUnits(usycBal, 6),
     });
-
-    const balRes = await circleClient.getWalletTokenBalance({ id: process.env.CIRCLE_WALLET_ID });
-    const tokenBalances = balRes.data?.tokenBalances || [];
-
-    const usdc = tokenBalances.find(t => t.token?.symbol === 'USDC')?.amount || '0';
-    const usyc = tokenBalances.find(t => t.token?.symbol === 'USYC')?.amount || '0';
-
-    res.json({ usdc, usyc });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// POST /api/admin/deposit-reserve - admin deposits USYC into contract reserve
+// --- Admin routes (unbilled) ---
+
+// GET /api/admin/balance/:address - on-chain USDC + USYC balances
+app.get('/api/admin/balance/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    if (!ethers.isAddress(address)) {
+      return res.status(400).json({ error: 'Invalid address' });
+    }
+    const provider = new ethers.JsonRpcProvider(ARC_RPC_URL);
+    const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_BALANCE_ABI, provider);
+    const usyc = new ethers.Contract(USYC_ADDRESS, ERC20_BALANCE_ABI, provider);
+
+    const [usdcBal, usycBal] = await Promise.all([
+      usdc.balanceOf(address).catch(() => 0n),
+      usyc.balanceOf(address).catch(() => 0n),
+    ]);
+
+    res.json({
+      address,
+      usdc: ethers.formatUnits(usdcBal, 6),
+      usyc: ethers.formatUnits(usycBal, 6),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/admin/wallet-balance - Circle DCV wallet token balances
+app.get('/api/admin/wallet-balance', async (req, res) => {
+  try {
+    const walletId = process.env.CIRCLE_WALLET_ID;
+    if (!walletId) {
+      return res.status(500).json({ error: 'CIRCLE_WALLET_ID not set', tokenBalances: [] });
+    }
+    const client = getCircleClient();
+    const balRes = await client.getWalletTokenBalance({ id: walletId });
+    const tokenBalances = balRes?.data?.tokenBalances || [];
+    res.json({
+      walletId,
+      address: process.env.CIRCLE_WALLET_ADDRESS || null,
+      tokenBalances,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message, tokenBalances: [] });
+  }
+});
+
+// POST /api/admin/deposit-reserve - body { amountUsyc } human units
 app.post('/api/admin/deposit-reserve', async (req, res) => {
   try {
-    const { initiateDeveloperControlledWalletsClient } = require('@circle-fin/developer-controlled-wallets');
-    const circleClient = initiateDeveloperControlledWalletsClient({
-      apiKey: process.env.CIRCLE_API_KEY,
-      entitySecret: process.env.CIRCLE_ENTITY_SECRET,
-    });
-
-    const { amountUsyc } = req.body;
-    if (!amountUsyc || amountUsyc <= 0) {
-      return res.status(400).json({ error: 'amountUsyc required and must be > 0' });
+    const { amountUsyc } = req.body || {};
+    const amount = Number(amountUsyc);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ ok: false, error: 'amountUsyc required and must be > 0' });
     }
-
-    const amountUnits = (BigInt(Math.round(amountUsyc * 1e6))).toString();
+    const walletId = process.env.CIRCLE_WALLET_ID;
+    if (!walletId) {
+      return res.status(500).json({ ok: false, error: 'CIRCLE_WALLET_ID not set' });
+    }
+    if (!BLINK_CONTRACT_ADDRESS) {
+      return res.status(500).json({ ok: false, error: 'BLINK_CONTRACT_ADDRESS not set' });
+    }
+    const client = getCircleClient();
+    const amountUnits = (BigInt(Math.round(amount * 1e6))).toString();
     const MAX_UINT256 = '115792089237316195423570985008687907853269984665640564039457584007913129639935';
 
-    // Step 1: Approve BlinkReserve to spend USYC from Circle dev wallet
-    await circleClient.createContractExecutionTransaction({
-      walletId: process.env.CIRCLE_WALLET_ID,
+    // 1) Approve the Blink contract to pull USYC from the DCV wallet
+    await client.createContractExecutionTransaction({
+      walletId,
       contractAddress: USYC_ADDRESS,
       abiFunctionSignature: 'approve(address,uint256)',
-      abiParameters: [BLINKRESERVE_ADDRESS, MAX_UINT256],
+      abiParameters: [BLINK_CONTRACT_ADDRESS, MAX_UINT256],
       fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
     });
+    await new Promise((r) => setTimeout(r, 3000));
 
-    // Wait for approve to land on-chain
-    await new Promise(r => setTimeout(r, 3000));
-
-    // Step 2: Call depositReserve on BlinkReserve
-    const depositTx = await circleClient.createContractExecutionTransaction({
-      walletId: process.env.CIRCLE_WALLET_ID,
-      contractAddress: BLINKRESERVE_ADDRESS,
+    // 2) Call depositReserve(uint256) on the Blink contract
+    const depositTx = await client.createContractExecutionTransaction({
+      walletId,
+      contractAddress: BLINK_CONTRACT_ADDRESS,
       abiFunctionSignature: 'depositReserve(uint256)',
       abiParameters: [amountUnits],
       fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
     });
 
-    totalReserveUsyc += amountUsyc;
-    res.json({ success: true, txId: depositTx.data.id, amountUsyc });
+    res.json({ ok: true, txId: depositTx?.data?.id || null, amountUsyc: amount });
   } catch (error) {
-    console.error('Deposit reserve error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('deposit-reserve error:', error);
+    res.status(500).json({ ok: false, error: error.message });
   }
 });
 
-// POST /api/admin/trigger-claim - admin triggers USDC payout to a user
-app.post('/api/admin/trigger-claim', async (req, res) => {
-  try {
-    const { initiateDeveloperControlledWalletsClient } = require('@circle-fin/developer-controlled-wallets');
-    const circleClient = initiateDeveloperControlledWalletsClient({
-      apiKey: process.env.CIRCLE_API_KEY,
-      entitySecret: process.env.CIRCLE_ENTITY_SECRET,
-    });
-
-    const { recipientAddress, amountUsdc } = req.body;
-    if (!recipientAddress || !ethers.isAddress(recipientAddress)) {
-      return res.status(400).json({ error: 'Valid recipientAddress required' });
-    }
-    if (!amountUsdc || amountUsdc <= 0) {
-      return res.status(400).json({ error: 'amountUsdc must be > 0' });
-    }
-
-    const amountUnits = (BigInt(Math.round(amountUsdc * 1e6))).toString();
-
-    // Transfer USDC from Circle dev wallet to recipient
-    const tx = await circleClient.createContractExecutionTransaction({
-      walletId: process.env.CIRCLE_WALLET_ID,
-      contractAddress: USDC_ADDRESS,
-      abiFunctionSignature: 'transfer(address,uint256)',
-      abiParameters: [recipientAddress, amountUnits],
-      fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
-    });
-
-    res.json({ success: true, txId: tx.data.id, amountUsdc, recipientAddress });
-  } catch (error) {
-    console.error('Trigger claim error:', error);
-    res.status(500).json({ error: error.message });
-  }
+app.post('/api/settle', (req, res) => {
+  const { totalMicroUsdc = 0, bands = [], txHashes = [] } = req.body || {};
+  const receiptId = randomHex(16);
+  res.json({
+    settled: true,
+    receiptId,
+    totalMicroUsdc,
+    bands,
+    txHashes,
+    timestamp: new Date().toISOString(),
+  });
 });
 
-// --- Claims v1 router ---
-// Uses the in-memory repository by default. The reserveClient is wired to
-// the live Circle USDC transfer here; tests inject a mock BlinkReserve
-// adapter instead. See backend/src/claims/payout.ts for the interface.
-const liveReserveClient = {
-  async transferPayout({ claimId, recipientAddress, amountUsdc }) {
-    try {
-      const { initiateDeveloperControlledWalletsClient } = require('@circle-fin/developer-controlled-wallets');
-      const circleClient = initiateDeveloperControlledWalletsClient({
-        apiKey: process.env.CIRCLE_API_KEY,
-        entitySecret: process.env.CIRCLE_ENTITY_SECRET,
-      });
-      const amountUnits = BigInt(Math.round(amountUsdc * 1e6)).toString();
-      const tx = await circleClient.createContractExecutionTransaction({
-        walletId: process.env.CIRCLE_WALLET_ID,
-        contractAddress: USDC_ADDRESS,
-        abiFunctionSignature: 'transfer(address,uint256)',
-        abiParameters: [recipientAddress, amountUnits],
-        fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
-        refId: claimId,
-      });
-      return { success: true, txHash: tx.data && tx.data.id, network: 'arc-testnet' };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  },
-};
-
-app.use(
-  '/claims',
-  createClaimsRouter({
-    reserveClient: liveReserveClient,
-  })
-);
-
-// Start the server
-async function startServer() {
-  try {
-    app.listen(PORT, () => {
-      console.log(`Blink backend server running on port ${PORT}`);
-      console.log(`API endpoints available:`);
-      console.log(`   - GET  /api/health`);
-      console.log(`   - GET  /api/status`);
-      console.log(`   - GET  /api/insure/active  (x402 - $0.0005/req)`);
-      console.log(`   - GET  /api/insure/idle     (x402 - $0.001/req)`);
-      console.log(`   - GET  /api/balance/:address`);
-      console.log(`   - POST /api/admin/deposit-reserve`);
-      console.log(`   - POST /api/admin/trigger-claim`);
-      console.log(`Seller address: ${process.env.CIRCLE_WALLET_ADDRESS}`);
-    });
-  } catch (error) {
-    console.error('Failed to start server:', error);
-  }
+// --- Startup ---
+function startServer() {
+  app.listen(PORT, () => {
+    console.log(`Blink backend running on port ${PORT}`);
+    console.log(`Seller: ${process.env.CIRCLE_WALLET_ADDRESS}`);
+    console.log(`Blink contract: ${BLINK_CONTRACT_ADDRESS} @ ${ARC_RPC_URL}`);
+    console.log('Billed routes:');
+    for (const r of BILLED) console.log(`   GET ${r.path}  (${r.price})`);
+    console.log('Unbilled: GET /api/health, GET /api/status, POST /api/settle');
+  });
 }
 
-// Handle graceful shutdown
 process.on('SIGINT', () => {
-  console.log('\nShutting down gracefully...');
+  console.log('\nShutting down...');
   process.exit(0);
 });
 
-// Only start when run directly (not when required for testing)
-if (require.main === module) {
-  startServer();
-}
+if (require.main === module) startServer();
 
 module.exports = app;

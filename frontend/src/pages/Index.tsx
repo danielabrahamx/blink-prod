@@ -1,13 +1,14 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Zap, Shield, TrendingUp, ArrowRight, Laptop, Building2 } from "lucide-react";
-import InsuracleDashboard from '@/InsuracleDashboard';
 import InsuracleDashboardAdmin from '@/InsuracleDashboardAdmin';
 import EmailGate from '@/pages/EmailGate';
 import WaitlistCta from '@/components/WaitlistCta';
 import { hasPassedGate, hasSignedUp } from '@/lib/emailGate';
 
 const Index = () => {
-  const [userType, setUserType] = useState<"individual" | "company" | null>(null);
+  const navigate = useNavigate();
+  const [userType, setUserType] = useState<"company" | null>(null);
   const [gatePassed, setGatePassed] = useState<boolean>(() => hasPassedGate());
   const [signedUp, setSignedUp] = useState<boolean>(() => hasSignedUp());
 
@@ -25,15 +26,6 @@ const Index = () => {
   const waitlistCta = !signedUp ? (
     <WaitlistCta onSignedUp={() => setSignedUp(true)} />
   ) : null;
-
-  if (userType === "individual") {
-    return (
-      <>
-        <InsuracleDashboard setUserType={setUserType as unknown as (userType: string) => void} />
-        {waitlistCta}
-      </>
-    );
-  }
 
   if (userType === "company") {
     return (
@@ -79,10 +71,11 @@ const Index = () => {
         {/* Access cards */}
         <div className="grid md:grid-cols-2 gap-4 mb-20">
 
-          {/* User card */}
+          {/* Live demo card */}
           <button
-            onClick={() => setUserType("individual")}
+            onClick={() => navigate('/set-home')}
             className="group text-left bg-[#0e0e0e] border border-[#1e1e1e] hover:border-[#e8a020] p-8 transition-all duration-200"
+            data-testid="cta-live-demo"
           >
             <div className="flex items-center justify-between mb-6">
               <div className="p-2 bg-[#141414] border border-[#1e1e1e] group-hover:border-[#e8a020]/30 transition-colors">
@@ -90,12 +83,14 @@ const Index = () => {
               </div>
               <ArrowRight className="h-4 w-4 text-[#444444] group-hover:text-[#e8a020] group-hover:translate-x-1 transition-all duration-200" />
             </div>
-            <h2 className="font-bebas text-3xl tracking-widest mb-2 text-[#f0f0f0]">GET COVERAGE</h2>
+            <h2 className="font-bebas text-3xl tracking-widest mb-2 text-[#f0f0f0]">TRY THE LIVE DEMO</h2>
             <p className="text-[#666666] text-sm leading-relaxed">
-              Add funds, pick your risk mode, and watch your premium adjust every second as you move between safe and risky moments.
+              Set your home base, then run a 60-second session where your
+              premium reacts to your real location. Simulation only — no wallet,
+              no gas, no sign-up beyond the gate you just passed.
             </p>
             <div className="mt-6 pt-4 border-t border-[#1a1a1a]">
-              <span className="font-dm-mono text-xs text-[#444444]">From $0.0005 / second</span>
+              <span className="font-dm-mono text-xs text-[#444444]">From £6/month at home · scales up when you travel</span>
             </div>
           </button>
 
@@ -169,7 +164,15 @@ const Index = () => {
       <footer className="border-t border-[#1a1a1a] px-8 py-6 flex items-center justify-between">
         <span className="font-bebas text-lg text-[#333333] tracking-widest">BLINK</span>
         <p className="text-xs text-[#333333] font-dm-mono">© 2026 Blink. Per-second laptop micro-insurance.</p>
-        <div className="text-xs text-[#333333] font-dm-mono uppercase tracking-widest">Arc Testnet</div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => navigate('/admin/gateway')}
+            className="text-xs text-[#333333] hover:text-[#888888] font-dm-mono uppercase tracking-widest transition-colors"
+          >
+            Admin
+          </button>
+          <div className="text-xs text-[#333333] font-dm-mono uppercase tracking-widest">Arc Testnet</div>
+        </div>
       </footer>
 
     </div>

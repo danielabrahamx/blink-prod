@@ -1,75 +1,56 @@
-# Status — v0.1.0-founder-dogfood
+# STATUS — v2 browser demo
 
-**Date:** 2026-04-21.
+**Branch:** `v2-browser-demo`
+**Target tag:** `v0.2.0-browser-demo`
+**Previous release preserved at:** `v0.1.0-founder-dogfood`
 
-## What's shipped
+## What shipped in v2
 
-- 8 parallel feature branches merged into `main`:
-  - `feat/backend-ts` — TypeScript Express, Zod ingress, pino, Redis rate-limit, MaxMind GeoIP.
-  - `feat/db-schema` — Postgres migrations (10 tables), typed pg Pool, testcontainers integration test.
-  - `feat/electron-shell` — Windows-first Electron with keytar-backed session + device keys, IPC, CSP.
-  - `feat/signal-agent` — 7-signal collector, JCS envelope canonicalization, Ed25519 signing, SQLite offline queue.
-  - `feat/risk-engine` — Rulebook v1.0.0 factor-product scorer + policy FSM with claim lifecycle.
-  - `feat/settlement-x402` — x402 client-side auto-signer, Circle Gateway integration, BlinkReserve parity tests.
-  - `feat/admin-portal` — Policy inspector, replay, metrics, CSV export.
-  - `feat/claims-v1` — Eligibility, fraud flags, admin review, sanctions screening, BlinkReserve payout.
-- Post-merge factory bridge in `electron/src/signal-collector/factory.ts` reconciles Agent C's IPC contract with Agent D's orchestrator.
-- Unsigned NSIS installer at `electron/dist-installer/Blink-0.1.0-dev-x64.exe` (88 MB).
+- `/` — landing, email gate, waitlist CTA. Retained from v1.
+- `/set-home` — geolocation prompt, IP-country inference, home spawn
+  persisted to localStorage under `blink_home_spawn_v2`.
+- `/live` — 60-second session driven by `useGeolocation` +
+  `useBattery`, rated by `rulebookV2.scoreV2`, accruing integer
+  µ-USDC per tick.
+- Session summary card with total paid, average multiplier, seconds
+  per band, and a simulated settlement tx id.
+- Dev-only **Spoof away** affordance (shown in dev or with `?demo=1`).
 
-## Verification
+## What was removed from `main`
 
-| Workspace | Tests | Typecheck | Notes |
-|---|---|---|---|
-| Backend | 314/314 pass | clean | vitest, 36 files |
-| Frontend | 70/70 pass | clean | vitest + jsdom + jest-dom matchers via `expect.extend` |
-| Electron | 44/44 pass | clean | vitest, native deps rebuilt via electron-rebuild |
-| Contracts | 8/8 pass | — | hardhat + chai |
-| Backend boot | `/api/health` 200, `/admin/metrics` 200 | — | Postgres on :5434, Redis on :6380 |
+- `electron/` — entire tree (62 files). Desktop MVP lives at the v1 tag.
+- `backend/` — Express server, Postgres migrations, TypeScript src.
+- `docker-compose.yml` — Postgres + Redis compose file.
+- `tests/e2e/` and `playwright.config.ts` — e2e tests pointed at the
+  now-deleted backend on `:3001`.
+- `docs/DEVIATIONS.md`, `docs/STATUS.md` — archived under
+  `docs/archive/v1/` for reference.
 
-## What requires a human operator
+## Verified
 
-The end-to-end user journey is driven by UI interaction and cannot be executed headlessly in this session:
+- `bun run test` — 153 / 153 green (18 files). Includes 48 cases on
+  `rulebookV2`, 12 on `battery`, 13 on `geolocation`, 11 on
+  `homeSpawn`, 4 on `LiveDemo`.
+- `bun run build` — succeeds; 491 kB JS (156 kB gzip). Warning about
+  Tailwind arbitrary-value class resolved.
+- `bun run typecheck` — no errors in new v2 code. (Pre-existing
+  jest-dom type-augmentation warnings in `admin/**` unchanged.)
 
-- Launch installer → approve Windows SmartScreen warning (unsigned build).
-- Onboarding flow → enter email / name.
-- Connect wallet → sign EIP-3009 authorization.
-- Deposit USDC on Arc testnet (deployer wallet `0x4286a70ED45D7e3ccA8d174D9590414c984B3C39`, 13.93 ETH + 13.93 USDC confirmed funded).
-- Either wait 48h or force via admin for calibration completion.
-- Exercise multipliers by unplugging charger, closing lid, switching Wi-Fi.
-- Submit claim via UI.
-- Admin approve → verify payout tx lands on Arc.
+## Not verified / human-smoke gates
 
-Per the handoff doc, `v0.1.0-founder-dogfood` is tagged at the last known green integration state; the founder runs the installer and performs the live UI smoke as the first user.
+- Netlify preview build (pending push of `v2-browser-demo` to origin).
+- Manual walk of the /live journey in Chromium on a laptop (grant
+  geolocation, unplug charger, confirm multiplier unchanged, press
+  Spoof away, confirm ticker doubles). This is the acceptance test
+  per the handoff.
 
-## Known limitations and deferred work
+## Known carry-overs
 
-### Limitations
-- Installer is unsigned; Windows SmartScreen prompts on first launch.
-- MaxMind GeoLite2 DB path is configured but the `.mmdb` file is not bundled (license restricts redistribution); ingest falls back to `GEOIP_LOCAL_COUNTRY` when set or null when absent.
-- Circle Compliance API entitlement unverified — sanctions screening falls back to local blocklist.
-- BlinkReserve contract retains Chainlink oracle dependency from the hackathon-era Paramify; the "remove the oracle" PR is a follow-up to simplify the reserve to a pure payout pool.
-
-### Deferred
-- Phase 6 Mac build.
-- Actuarial GLM to replace rulebook v1.
-- Live Arc testnet deploy of BlinkReserve (deploy script is runnable once deployer key is pinned; hardhat dry-run succeeds).
-
-## How to run locally
-
-```bash
-# backend
-export CLOUDSMITH_TOKEN=<token>
-docker run -d --name blink-postgres -p 5434:5432 \
-  -e POSTGRES_USER=blink -e POSTGRES_PASSWORD=blink_dev -e POSTGRES_DB=blink postgres:16-alpine
-docker run -d --name blink-redis -p 6380:6379 redis:7-alpine
-cd backend && bun install && bun run migrate:up && bun run dev
-
-# electron
-cd electron && bun install && bun run dev
-```
-
-## Known technical debt
-
-- Backend `routes/signals.ts` currently drops scoring on the ingest path; the accrual loop scores asynchronously. Re-connecting synchronous scoring is a follow-up.
-- Several stub files from Agent A were superseded at merge time (`backend/src/features/`, `backend/src/admin/replay.ts`, Agent A's `app.test.ts`, Agent A's `risk/index.test.ts`). These were removed with explanation in the merge commit messages.
-- Two FeatureVector shapes exist: Agent A's design-doc-derived scalars on `backend/src/types/index.ts` (retained for admin/inspector tooling) and Agent E's categorical schema on `backend/src/risk/types.ts` (authoritative for scoring). Inspector-side consumers read Agent A's shape; scoring reads Agent E's. They coexist without conflict because no code path flows data from one into the other unchecked.
+- `@circlefin/x402-batching` and `@x402/*` are still installed. They
+  are only referenced by the retired `InsuracleDashboard` code path
+  (unreachable from v2 routing) and by `gatewayClient.ts` (only hit
+  when `VITE_DEMO_MODE=false`, which we never ship). The build prunes
+  them as dead code; removing from `package.json` is a future cleanup.
+- The `InsuracleDashboardAdmin` view is still wired behind the "Admin
+  Portal" landing card, untouched in v2. The new /live flow is the
+  primary experience.

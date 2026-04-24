@@ -171,15 +171,19 @@ export default function InsuracleDashboardAdmin({ setUserType }: BlinkReserveDas
       {/* Main */}
       <div className="max-w-xl mx-auto px-6 py-8 space-y-3">
 
-        {/* Circle Dev Wallet */}
+        {/* Live premium pool (Circle Dev Wallet) */}
         <div className="bg-[#0e0e0e] border border-[#1a1a1a]">
           <div className="px-6 py-4 border-b border-[#1a1a1a] flex items-center gap-2">
-            <Wallet className="h-3.5 w-3.5 text-[#666666]" />
-            <span className="text-xs uppercase tracking-widest text-[#666666]">Circle Dev Wallet</span>
+            <Wallet className="h-3.5 w-3.5 text-[#e8a020]" />
+            <span className="text-xs uppercase tracking-widest text-[#e8a020]">Live premium pool</span>
           </div>
           <div className="p-6">
+            <p className="text-xs text-[#555555] leading-relaxed mb-4">
+              Every customer premium lands here via x402 micropayments. Sweep
+              the USDC to the on-contract reserve below when it accumulates.
+            </p>
             <div className="bg-[#141414] border border-[#1e1e1e] p-4 mb-4">
-              <div className="text-xs text-[#444444] uppercase tracking-widest mb-2">Wallet Address</div>
+              <div className="text-xs text-[#444444] uppercase tracking-widest mb-2">Pool address (Circle DCV)</div>
               <p className="font-dm-mono text-sm text-[#cccccc] break-all leading-relaxed">
                 {isLoading ? (
                   <span className="text-[#333333]">Loading...</span>
@@ -191,15 +195,15 @@ export default function InsuracleDashboardAdmin({ setUserType }: BlinkReserveDas
 
             <div className="grid grid-cols-2 gap-2">
               <div className="bg-[#141414] border border-[#1e1e1e] px-4 py-3">
-                <div className="text-xs text-[#444444] uppercase tracking-widest mb-1">USDC</div>
-                <div className="font-dm-mono text-lg text-[#f0f0f0]">
+                <div className="text-xs text-[#444444] uppercase tracking-widest mb-1">Collected premiums</div>
+                <div className="font-dm-mono text-lg text-[#e8a020]">
                   {parseFloat(adminUsdcBalance).toFixed(4)}
-                  <span className="text-[#444444] text-xs ml-1">USDC</span>
+                  <span className="text-[#555555] text-xs ml-1">USDC</span>
                 </div>
               </div>
               <div className="bg-[#141414] border border-[#1e1e1e] px-4 py-3">
-                <div className="text-xs text-[#444444] uppercase tracking-widest mb-1">USYC</div>
-                <div className="font-dm-mono text-lg text-[#e8a020]">
+                <div className="text-xs text-[#444444] uppercase tracking-widest mb-1">USYC on hand</div>
+                <div className="font-dm-mono text-lg text-[#f0f0f0]">
                   {parseFloat(adminUsycBalance).toFixed(4)}
                   <span className="text-[#555555] text-xs ml-1">USYC</span>
                 </div>
@@ -215,13 +219,18 @@ export default function InsuracleDashboardAdmin({ setUserType }: BlinkReserveDas
             <span className="text-xs uppercase tracking-widest text-[#666666]">Reserve Pool</span>
           </div>
           <div className="p-6">
+            <p className="text-xs text-[#555555] leading-relaxed mb-3">
+              Reserve backing held by the Blink contract. Funded with USYC
+              via the deposit below; the USDC pool fills when premiums are
+              swept from the live pool above.
+            </p>
             <div className="bg-[#141414] border border-[#1e1e1e] divide-y divide-[#1e1e1e] mb-4">
               <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-[#555555]">USDC Pool (premiums)</span>
+                <span className="text-[#555555]">USDC on contract</span>
                 <span className="font-dm-mono text-[#f0f0f0]">{parseFloat(contractUsdcPool).toFixed(6)} USDC</span>
               </div>
               <div className="flex justify-between px-4 py-3 text-sm">
-                <span className="text-[#555555]">USYC Reserve</span>
+                <span className="text-[#555555]">USYC reserve</span>
                 <span className="font-dm-mono text-[#e8a020]">{parseFloat(contractUsycReserve).toFixed(6)} USYC</span>
               </div>
             </div>

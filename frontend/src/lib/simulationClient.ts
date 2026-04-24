@@ -1,122 +1,158 @@
-import type { Balances, PayResult } from '@circlefin/x402-batching/client';
-
 export const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true';
 export const DEMO_LIMIT_SECONDS = 60;
 
-const DEMO_BUYER_ADDRESS = '0xDEM0b1dCAFE00C0ffee5Bla1nk5Ca1C1ated0000';
-const DEMO_SELLER_ADDRESS = '0xA4D42d3f0aE0e03Df1937cDb0F14C58E64581359';
+export type PayResult =
+  | {
+      ok: true;
+      txHash: string;
+      amountMicroUsdc: number;
+      endpoint: string;
+      payload: unknown;
+    }
+  | { ok: false; error: string; endpoint: string };
 
-const ACTIVE_RATE = 0.000005;
-const IDLE_RATE = 0.00001;
-
-type DemoState = {
-  walletUsdc: number;
-  gatewayUsdc: number;
-  contractUsdcPool: number;
-  contractUsycReserve: number;
-  adminUsdc: number;
-  adminUsyc: number;
-  paymentsMade: number;
+export type GatewayBalances = {
+  walletUsdc: string;
+  gatewayAvailableUsdc: string;
+  gatewayTotalUsdc: string;
 };
 
-const state: DemoState = {
-  walletUsdc: 10.0,
-  gatewayUsdc: 1.0,
-  contractUsdcPool: 0.125,
-  contractUsycReserve: 500.0,
-  adminUsdc: 42.5,
-  adminUsyc: 500.0,
-  paymentsMade: 0,
+export type DepositResult =
+  | { ok: true; txHash: string; formattedAmount: string }
+  | { ok: false; error: string };
+
+export type BlinkGatewayClient = {
+  pay: (endpoint: string) => Promise<PayResult>;
+  deposit: (amountUsdc: string) => Promise<DepositResult>;
+  getBalances: () => Promise<GatewayBalances>;
 };
 
-const sleep = (min: number, max?: number) =>
+const PRICE_TABLE: Record<string, number> = {
+  '/api/insure/home-charging': 3,
+  '/api/insure/home-battery': 6,
+  '/api/insure/near-charging': 4,
+  '/api/insure/near-battery': 8,
+  '/api/insure/away-charging': 6,
+  '/api/insure/away-battery': 12,
+  '/api/insure/idle': 10,
+};
+
+export function priceFor(endpoint: string): number {
+  let path = endpoint;
+  try {
+    path = new URL(endpoint, 'http://x.local').pathname;
+  } catch {
+    // endpoint was already a path
+  }
+  for (const key of Object.keys(PRICE_TABLE)) {
+    if (path === key || path.endsWith(key)) return PRICE_TABLE[key];
+  }
+  return 0;
+}
+
+const sleep = (min: number, max?: number): Promise<void> =>
   new Promise(r => setTimeout(r, max ? min + Math.random() * (max - min) : min));
 
-const randTx = () => `0xdemo${Math.random().toString(16).slice(2, 10).padEnd(8, '0')}`;
-
-export function demoPaymentsRemaining(): number {
-  return Math.max(0, DEMO_LIMIT_SECONDS - state.paymentsMade);
+function randomHex(len: number): string {
+  const chars = '0123456789abcdef';
+  let out = '';
+  for (let i = 0; i < len; i++) {
+    out += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return out;
 }
 
-export function createSimulationGatewayClient() {
+export function createSimulationGatewayClient(): BlinkGatewayClient {
+  let simWalletUsdc = 100;
+  let simGatewayUsdc = 10;
   return {
-    address: DEMO_BUYER_ADDRESS,
-
-    async getBalances(): Promise<Balances> {
-      await sleep(120, 240);
-      return {
-        wallet: {
-          formatted: state.walletUsdc.toFixed(6),
-          raw: BigInt(Math.floor(state.walletUsdc * 1e6)),
-        },
-        gateway: {
-          formattedAvailable: state.gatewayUsdc.toFixed(6),
-          formattedTotal: state.gatewayUsdc.toFixed(6),
-          rawAvailable: BigInt(Math.floor(state.gatewayUsdc * 1e6)),
-          rawTotal: BigInt(Math.floor(state.gatewayUsdc * 1e6)),
-        },
-      } as unknown as Balances;
-    },
-
-    async deposit(amount: string): Promise<{ formattedAmount: string; transaction: string }> {
-      await sleep(600, 900);
-      const n = parseFloat(amount);
-      if (state.walletUsdc < n) {
-        throw new Error('Demo wallet balance too low for this deposit');
-      }
-      state.walletUsdc -= n;
-      state.gatewayUsdc += n;
-      return { formattedAmount: n.toFixed(6), transaction: randTx() };
-    },
-
     async pay(endpoint: string): Promise<PayResult> {
       await sleep(60, 180);
-      if (state.paymentsMade >= DEMO_LIMIT_SECONDS) {
-        throw new Error(
-          `Demo session ended (${DEMO_LIMIT_SECONDS}s limit). Reload to restart, or email daniel@sibrox.com for a live walkthrough.`
-        );
-      }
-      state.paymentsMade += 1;
-      const rate = endpoint.includes('active') ? ACTIVE_RATE : IDLE_RATE;
-      state.gatewayUsdc = Math.max(0, state.gatewayUsdc - rate);
-      state.contractUsdcPool += rate;
+      const microUsdc = priceFor(endpoint);
+      simGatewayUsdc = Math.max(0, simGatewayUsdc - microUsdc / 1_000_000);
       return {
-        formattedAmount: rate.toFixed(6),
-        transaction: randTx(),
-      } as unknown as PayResult;
+        ok: true,
+        txHash: '0xSIM' + randomHex(62),
+        amountMicroUsdc: microUsdc,
+        endpoint,
+        payload: { simulated: true },
+      };
+    },
+    async deposit(amountUsdc: string): Promise<DepositResult> {
+      await sleep(400, 900);
+      const n = Number(amountUsdc);
+      const amt = Number.isFinite(n) && n > 0 ? n : 0;
+      if (amt === 0) return { ok: false, error: 'Invalid deposit amount' };
+      if (amt > simWalletUsdc) return { ok: false, error: 'Insufficient wallet USDC' };
+      simWalletUsdc -= amt;
+      simGatewayUsdc += amt;
+      return {
+        ok: true,
+        txHash: '0xSIM' + randomHex(62),
+        formattedAmount: amt.toFixed(6),
+      };
+    },
+    async getBalances(): Promise<GatewayBalances> {
+      await sleep(80, 180);
+      return {
+        walletUsdc: simWalletUsdc.toFixed(6),
+        gatewayAvailableUsdc: simGatewayUsdc.toFixed(6),
+        gatewayTotalUsdc: simGatewayUsdc.toFixed(6),
+      };
     },
   };
 }
 
-export async function simulateAdminStatus() {
-  await sleep(150, 300);
+export interface LiveSettlement {
+  txId: string;
+  totalMicroUsdc: number;
+  settledAt: number;
+}
+
+export async function simulateLiveSettlement(
+  totalMicroUsdc: number,
+): Promise<LiveSettlement> {
+  await sleep(600, 1200);
   return {
-    sellerAddress: DEMO_SELLER_ADDRESS,
-    contractUsdcPool: state.contractUsdcPool.toFixed(6),
-    contractUsycReserve: state.contractUsycReserve.toFixed(6),
+    txId: '0xSIM' + randomHex(62),
+    totalMicroUsdc,
+    settledAt: Date.now(),
   };
 }
 
-export async function simulateAdminBalance(_address: string) {
+// --- Admin dashboard simulation stubs ---
+// Demo-mode only. Real mode goes through backend HTTP endpoints.
+export async function simulateAdminStatus(): Promise<{
+  sellerAddress: string;
+  contractUsdcPool: string;
+  contractUsycReserve: string;
+}> {
   await sleep(150, 300);
   return {
-    usdc: state.adminUsdc.toFixed(6),
-    usyc: state.adminUsyc.toFixed(6),
+    sellerAddress: '0x0000000000000000000000000000000000000000',
+    contractUsdcPool: '0.000000',
+    contractUsycReserve: '0.000000',
   };
 }
 
-export async function simulateDepositReserve(amountUsyc: number) {
-  await sleep(800, 1400);
-  state.adminUsyc = Math.max(0, state.adminUsyc - amountUsyc);
-  state.contractUsycReserve += amountUsyc;
-  return { success: true, txId: randTx() };
+export async function simulateAdminBalance(
+  _address: string,
+): Promise<{ usdc: string; usyc: string }> {
+  await sleep(150, 300);
+  return { usdc: '0.000000', usyc: '0.000000' };
 }
 
-export async function simulateTriggerClaim(_recipientAddress: string, amountUsdc: number) {
-  await sleep(900, 1500);
-  if (state.contractUsdcPool < amountUsdc) {
-    throw new Error('Simulated pool insufficient for this claim amount');
-  }
-  state.contractUsdcPool -= amountUsdc;
-  return { success: true, txId: randTx() };
+export async function simulateDepositReserve(
+  _amountUsyc: number,
+): Promise<{ success: boolean; txId: string }> {
+  await sleep(600, 1200);
+  return { success: true, txId: '0xSIM' + randomHex(62) };
+}
+
+export async function simulateTriggerClaim(
+  _recipient: string,
+  _amountUsdc: number,
+): Promise<{ success: boolean; txId: string }> {
+  await sleep(600, 1200);
+  return { success: true, txId: '0xSIM' + randomHex(62) };
 }
