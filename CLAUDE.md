@@ -5,6 +5,28 @@
 
 ---
 
+## v2 architecture note (supersedes the vault doc where they disagree)
+
+As of `v2-browser-demo` (2026-04-21), Blink is a browser-only demo. The
+vault's blink.md is still correct for historical v1 real-mode context
+but describes a system that no longer ships publicly.
+
+- No Electron. No backend. No Postgres. No x402 or Circle at runtime.
+- Everything at `/live` runs in the tab against
+  `frontend/src/lib/simulationClient.ts`.
+- Desktop work from the founder-dogfood era is preserved at the
+  `v0.1.0-founder-dogfood` tag and is not on `main`.
+- The only rater is the location band (home/near/away) defined in
+  `frontend/src/lib/rulebookV2.ts`. Battery is a display flag only.
+- All accrual math is integer µ-USDC (USDC's 6-decimal floor). GBP is
+  a display conversion only, never settled on.
+
+Read `docs/STATUS.md` for what shipped, what was verified, and what
+smoke-gates remain. Read `.gstack/projects/danielabrahamx-blink/
+BUILD-PLAN-V2-HANDOFF.md` for the canonical v2 spec.
+
+---
+
 ## Workflow Orchestration
 
 ### 1. Plan Mode Default
@@ -19,6 +41,7 @@
 - Offload research, exploration, and parallel analysis to subagents
 - For complex problems, throw more compute at it via subagents
 - One task per subagent for focused execution
+- **Always dispatch independent subagents in parallel** — single message, multiple Agent tool calls. Serial dispatch is a bug, not a choice. If 2+ agents have no shared state, they run concurrently.
 
 ### 3. Self-Improvement Loop
 

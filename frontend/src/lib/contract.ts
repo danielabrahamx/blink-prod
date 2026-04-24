@@ -1,9 +1,8 @@
 // Deployed contract addresses and ABIs for the frontend.
 // The ABI below is the real BlinkReserve interface (exported from hardhat
 // artifacts via `npm run export:abi`). The address still points at the legacy
-// Paramify deployment on Arc testnet and will flip to the fresh BlinkReserve
-// address the moment a funded DEPLOYER_PRIVATE_KEY is plugged in — see
-// docs/DEVIATIONS.md #4 in the feat/settlement-x402 branch.
+// Blink contract deployment on Arc testnet and will flip to the fresh
+// BlinkReserve address the moment a funded DEPLOYER_PRIVATE_KEY is plugged in.
 export const BLINKRESERVE_ADDRESS = "0xFC1EfCE3D25E7eE5535E7E6D6731D9Ba131bDC43";
 
 export const BLINKRESERVE_ABI = [
