@@ -10,12 +10,14 @@ Wallets for reserve management.
 
 The repo has two run modes, toggled by `VITE_DEMO_MODE`:
 
-- **Real mode** (unset) — what this README describes. Runs locally
-  against the live Arc Testnet contract with a local backend on
-  `:3001`.
+- **Real mode** (unset, default) — what this README describes. The
+  public Netlify site ships in this mode and talks to the Fly-hosted
+  backend at `https://blink-prod-backend.fly.dev`. Locally you can
+  run the same mode against a backend on `:3001`.
 - **Simulation mode** (`VITE_DEMO_MODE=true`) — no backend, everything
-  faked client-side in `frontend/src/lib/simulationClient.ts`. This is
-  what Netlify builds and what the public demo URL serves.
+  faked client-side in `frontend/src/lib/simulationClient.ts`. Useful
+  for previewing without touching real wallets; flip on per-branch in
+  the Netlify UI.
 
 ## Architecture at a glance
 
@@ -200,14 +202,40 @@ The current contract address + ABI are live on Arc Testnet and valid
 as-is. A clean redeploy under a new name would require a new deployment
 and address update; not needed for the current build.
 
-## Deploying the simulation build
+## Deployment topology
 
-Netlify auto-builds `frontend/` on pushes. `netlify.toml` sets
-`VITE_DEMO_MODE=true` for production, deploy-preview, and branch-deploy
-contexts, so every preview URL ships the simulation experience. No
-backend is deployed; the public demo never transacts for real.
+The public site is **real-mode**:
 
-Promoting real-mode to a public URL is a non-trivial checklist — host
-the backend, move `VITE_BUYER_PRIVATE_KEY` off the bundle, add
-per-session spend caps, and flip `VITE_DEMO_MODE=false`. See
-`CLAUDE.md` for the full checklist.
+- **Frontend** — Netlify auto-builds `frontend/` on pushes to `main`
+  / `v2-browser-demo`. `netlify.toml` pins `VITE_BACKEND_URL` to the
+  Fly URL and `VITE_RPC_URL` to the public Arc testnet RPC for the
+  `production`, `deploy-preview`, and `branch-deploy` contexts.
+  `VITE_BUYER_PRIVATE_KEY` is set in the Netlify UI (Site settings →
+  Environment variables); only top up that wallet with a small float,
+  it ships in the bundle.
+- **Backend** — Fly app `blink-prod-backend` in region `lhr`, exposed
+  at `https://blink-prod-backend.fly.dev`. Deployed via
+  `backend/Dockerfile` + `backend/fly.toml`. Circle creds and the
+  contract address live as Fly secrets (`flyctl secrets list -a
+  blink-prod-backend`); none are committed.
+
+### Redeploying
+
+```bash
+# backend → Fly
+cd backend
+flyctl deploy -a blink-prod-backend
+
+# frontend → Netlify
+git push origin v2-browser-demo   # (or main) — Netlify CI builds
+```
+
+Whenever the backend's billed-route table changes (e.g. the
+`/api/insure/*` collapse), the Fly image must be redeployed — the
+frontend will get 404s otherwise.
+
+### Demo mode for offline previews
+
+Flip `VITE_DEMO_MODE=true` in the Netlify UI for any branch you want
+served from the in-tab simulation client. Useful when the Fly backend
+is being upgraded or for offline pitches.
