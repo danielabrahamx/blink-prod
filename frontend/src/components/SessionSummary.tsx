@@ -1,13 +1,17 @@
-import type { Band } from '@/lib/rulebookV2';
 import {
-  BAND_RATE_MICRO_USDC_PER_SEC,
+  BASE_RATE_MICRO_USDC_PER_SEC,
   microUsdcToGbpDisplay,
   microUsdcToUsdcDisplay,
 } from '@/lib/rulebookV2';
 
+export interface SecondsByState {
+  plugged: number;
+  unplugged: number;
+}
+
 export interface SessionResult {
   totalMicroUsdc: number;
-  secondsByBand: Record<Band, number>;
+  secondsByState: SecondsByState;
   txId: string | null;
   durationSeconds: number;
 }
@@ -18,30 +22,23 @@ interface Props {
   onBackToHome: () => void;
 }
 
-const BAND_LABEL: Record<Band, string> = {
-  home: 'HOME',
-  near: 'NEAR',
-  away: 'AWAY',
+const STATE_LABEL: Record<keyof SecondsByState, string> = {
+  plugged: 'AT DESK',
+  unplugged: 'ON THE MOVE',
 };
 
+function totalSeconds(state: SecondsByState): number {
+  return state.plugged + state.unplugged;
+}
+
 function averageMultiplier(result: SessionResult): number {
-  const totalSeconds = Object.values(result.secondsByBand).reduce(
-    (a, b) => a + b,
-    0,
-  );
-  if (totalSeconds === 0) return 1;
-  // Derive the compound average from the accrued total so it reflects
-  // both the location band breakdown and the battery factor the user
-  // experienced (both now compound into the rate).
-  const homeRate = BAND_RATE_MICRO_USDC_PER_SEC.home;
-  return result.totalMicroUsdc / (totalSeconds * homeRate);
+  const total = totalSeconds(result.secondsByState);
+  if (total === 0) return 1;
+  return result.totalMicroUsdc / (total * BASE_RATE_MICRO_USDC_PER_SEC);
 }
 
 export function SessionSummary({ result, onRunAgain, onBackToHome }: Props) {
-  const totalSeconds = Object.values(result.secondsByBand).reduce(
-    (a, b) => a + b,
-    0,
-  );
+  const total = totalSeconds(result.secondsByState);
   const avg = averageMultiplier(result);
 
   return (
@@ -59,7 +56,7 @@ export function SessionSummary({ result, onRunAgain, onBackToHome }: Props) {
         {microUsdcToUsdcDisplay(result.totalMicroUsdc)} USDC
       </div>
       <div className="text-[#888888] text-lg mt-2 font-dm-mono">
-        ≈ £{microUsdcToGbpDisplay(result.totalMicroUsdc)} · {totalSeconds} s
+        ≈ £{microUsdcToGbpDisplay(result.totalMicroUsdc)} · {total} s
       </div>
 
       <div className="mt-8 pt-6 border-t border-[#1a1a1a] space-y-3">
@@ -69,13 +66,13 @@ export function SessionSummary({ result, onRunAgain, onBackToHome }: Props) {
           </span>
           <span className="font-dm-mono text-[#f0f0f0]">{avg.toFixed(2)}×</span>
         </div>
-        {(Object.keys(result.secondsByBand) as Band[]).map(band => (
-          <div key={band} className="flex justify-between text-sm">
+        {(Object.keys(result.secondsByState) as Array<keyof SecondsByState>).map(state => (
+          <div key={state} className="flex justify-between text-sm">
             <span className="text-[#666666] uppercase tracking-widest text-xs">
-              {BAND_LABEL[band]} seconds
+              {STATE_LABEL[state]} seconds
             </span>
             <span className="font-dm-mono text-[#f0f0f0]">
-              {result.secondsByBand[band]}
+              {result.secondsByState[state]}
             </span>
           </div>
         ))}

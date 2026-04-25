@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Blink real-testnet payment runner (Arc Testnet chainId 5042002)
-// Round-robins 7 priced endpoints, produces 60 real x402 batched payments.
-// Uses GatewayClient from frontend/node_modules (installed via Circle private registry).
+// Round-robins the 2 priced endpoints (charging / battery), producing 60
+// real x402 batched payments. Uses GatewayClient from frontend/node_modules
+// (installed via Circle private registry).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,13 +38,8 @@ const client = new GatewayClient({
 });
 
 const ENDPOINTS = [
-  '/api/insure/home-charging',
-  '/api/insure/home-battery',
-  '/api/insure/near-charging',
-  '/api/insure/near-battery',
-  '/api/insure/away-charging',
-  '/api/insure/away-battery',
-  '/api/insure/idle',
+  '/api/insure/charging',
+  '/api/insure/battery',
 ];
 
 const ITERATIONS = Number(process.env.ITER) > 0 ? Number(process.env.ITER) : 60;
@@ -133,15 +129,14 @@ for (let i = 0; i < ITERATIONS; i++) {
 const okCount = log.entries.filter(e => e.ok).length;
 const failCount = log.entries.length - okCount;
 const totalMicro = log.entries.filter(e => e.ok).reduce((s, e) => s + (e.amountMicroUsdc || 0), 0);
-const bands = {};
+const state = { plugged: 0, unplugged: 0 };
 for (const e of log.entries.filter(x => x.ok)) {
-  const m = /\/api\/insure\/([^-]+)(?:-(\w+))?/.exec(e.endpoint);
-  const band = m ? m[1] : 'unknown';
-  bands[band] = (bands[band] || 0) + (e.amountMicroUsdc || 0);
+  const key = e.endpoint.endsWith('/charging') ? 'plugged' : 'unplugged';
+  state[key] += (e.amountMicroUsdc || 0);
 }
 const txHashes = log.entries.filter(x => x.ok).map(x => x.txHash);
 
-log.summary = { okCount, failCount, totalMicroUsdc: totalMicro, bands, firstThreeHashes: txHashes.slice(0, 3) };
+log.summary = { okCount, failCount, totalMicroUsdc: totalMicro, state, firstThreeHashes: txHashes.slice(0, 3) };
 fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2));
 
 console.log('\n=== SUMMARY ===');
@@ -154,7 +149,7 @@ try {
   const settleRes = await fetch(new URL('/api/settle', BACKEND).toString(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ totalMicroUsdc: totalMicro, bands, txHashes }),
+    body: JSON.stringify({ totalMicroUsdc: totalMicro, state, txHashes }),
   });
   const settleJson = await settleRes.json().catch(() => ({}));
   log.settlement = { status: settleRes.status, body: settleJson };

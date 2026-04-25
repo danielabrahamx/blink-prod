@@ -28,13 +28,8 @@ export type BlinkGatewayClient = {
 };
 
 const PRICE_TABLE: Record<string, number> = {
-  '/api/insure/home-charging': 3,
-  '/api/insure/home-battery': 6,
-  '/api/insure/near-charging': 4,
-  '/api/insure/near-battery': 8,
-  '/api/insure/away-charging': 6,
-  '/api/insure/away-battery': 12,
-  '/api/insure/idle': 10,
+  '/api/insure/charging': 3,
+  '/api/insure/battery': 6,
 };
 
 export function priceFor(endpoint: string): number {

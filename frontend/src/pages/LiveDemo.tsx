@@ -2,10 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import {
-  Zap,
   Plug,
   Unplug,
-  MapPin,
   Play,
   Square,
   ArrowLeft,
@@ -15,64 +13,38 @@ import {
 } from 'lucide-react';
 import { hasPassedGate } from '@/lib/emailGate';
 import { useBattery } from '@/lib/battery';
-import { useGeolocation, haversineMeters } from '@/lib/geolocation';
-import { readHomeSpawn } from '@/lib/homeSpawn';
-import { fetchIpCountry } from '@/lib/ipCountry';
 import {
-  type Band,
-  BAND_RATE_MICRO_USDC_PER_SEC,
+  BASE_RATE_MICRO_USDC_PER_SEC,
   BATTERY_MULTIPLIER_UNPLUGGED,
-  LOCATION_MULTIPLIER_BY_BAND,
   scoreV2,
 } from '@/lib/rulebookV2';
 import { getGatewayClient, type PayResult } from '@/lib/gatewayClient';
 import { buyInsurance as blinkBuyInsurance } from '@/lib/blinkContract';
 import { MultiplierDial } from '@/components/MultiplierDial';
 import { LiveTicker } from '@/components/LiveTicker';
-import { SessionSummary, type SessionResult } from '@/components/SessionSummary';
+import {
+  SessionSummary,
+  type SecondsByState,
+  type SessionResult,
+} from '@/components/SessionSummary';
 
 const SESSION_DURATION_SECONDS = 60;
 
-type BandWithIdle = Band | 'idle';
+const ENDPOINT_CHARGING = '/api/insure/charging';
+const ENDPOINT_BATTERY = '/api/insure/battery';
 
-// Heuristic: rulebookV2 does not emit an `idle` band. We treat a session
-// as idle when the browser Battery API reports no charging state AND the
-// user has no geolocation fix (no active usage signal). Agent D/C can
-// swap this out by threading a real `isUsing` flag through.
-function endpointFor(score: {
-  band: 'home' | 'near' | 'away';
-  charging: boolean;
-  idle?: boolean;
-}): string {
-  if (score.idle) return '/api/insure/idle';
-  const bat = score.charging ? 'charging' : 'battery';
-  return `/api/insure/${score.band}-${bat}`;
+function endpointFor(charging: boolean): string {
+  return charging ? ENDPOINT_CHARGING : ENDPOINT_BATTERY;
 }
-
-// Price table mirrors the backend's 7 priced endpoints. Derived from
-// rulebookV2's band rates × battery factor so the frontend total stays
-// consistent with what `scoreV2` already produces.
-const ENDPOINT_PRICE_MICRO_USDC: Record<string, number> = {
-  '/api/insure/home-charging':
-    BAND_RATE_MICRO_USDC_PER_SEC.home,
-  '/api/insure/home-battery':
-    BAND_RATE_MICRO_USDC_PER_SEC.home * BATTERY_MULTIPLIER_UNPLUGGED,
-  '/api/insure/near-charging':
-    BAND_RATE_MICRO_USDC_PER_SEC.near,
-  '/api/insure/near-battery':
-    BAND_RATE_MICRO_USDC_PER_SEC.near * BATTERY_MULTIPLIER_UNPLUGGED,
-  '/api/insure/away-charging':
-    BAND_RATE_MICRO_USDC_PER_SEC.away,
-  '/api/insure/away-battery':
-    BAND_RATE_MICRO_USDC_PER_SEC.away * BATTERY_MULTIPLIER_UNPLUGGED,
-  '/api/insure/idle': 1,
-};
 
 function priceFor(endpoint: string): number {
-  return ENDPOINT_PRICE_MICRO_USDC[endpoint] ?? 0;
+  if (endpoint === ENDPOINT_BATTERY) {
+    return BASE_RATE_MICRO_USDC_PER_SEC * BATTERY_MULTIPLIER_UNPLUGGED;
+  }
+  return BASE_RATE_MICRO_USDC_PER_SEC;
 }
 
-// ---- Wallet-panel helpers (inlined per Agent G scope) -------------------
+// ---- Wallet-panel helpers -------------------------------------------------
 
 const USDC_PRECOMPILE = '0x3600000000000000000000000000000000000000';
 const ARC_RPC_FALLBACK = 'https://rpc.arc-testnet.circle.com';
@@ -115,7 +87,7 @@ function deriveBuyerAddress(): string {
 }
 
 function endpointLabel(endpoint: string): string {
-  // "/api/insure/home-charging" -> "home-charging"
+  // "/api/insure/charging" -> "charging"
   const parts = endpoint.split('/');
   return parts[parts.length - 1] || endpoint;
 }
@@ -138,7 +110,6 @@ async function fetchBuyerUsdcBalance(
 ): Promise<bigint | null> {
   if (!buyer) return null;
   try {
-    // Raw eth_call avoids pulling in a full Contract/ABI wrapper.
     const data =
       BALANCE_OF_SELECTOR + buyer.toLowerCase().replace(/^0x/, '').padStart(64, '0');
     const body = {
@@ -178,7 +149,7 @@ interface SettleResponse {
 
 async function settleSession(
   totalMicroUsdc: number,
-  bands: Record<BandWithIdle, number>,
+  state: SecondsByState,
   txHashes: string[],
 ): Promise<SettleResponse> {
   const base =
@@ -187,51 +158,22 @@ async function settleSession(
   const res = await fetch(`${base}/api/settle`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ totalMicroUsdc, bands, txHashes }),
+    body: JSON.stringify({ totalMicroUsdc, state, txHashes }),
   });
   return (await res.json()) as SettleResponse;
 }
 
-type SpoofMode = 'off' | 'near' | 'away' | 'international';
-
-const SPOOF_PRESETS: Record<
-  Exclude<SpoofMode, 'off'>,
-  { distanceMeters: number; overrideIpCountry?: string; label: string }
-> = {
-  near: { distanceMeters: 4, label: 'Near (4 m)' },
-  away: { distanceMeters: 10, label: 'Away (10 m)' },
-  international: {
-    distanceMeters: 1,
-    overrideIpCountry: 'FR',
-    label: 'International (IP: FR)',
-  },
-};
-
-function devAffordanceAllowed(): boolean {
-  if (import.meta.env.DEV) return true;
-  if (typeof window === 'undefined') return false;
-  return new URLSearchParams(window.location.search).has('demo');
-}
-
 export default function LiveDemo() {
   const navigate = useNavigate();
-  const geo = useGeolocation();
   const battery = useBattery();
-
-  const homeSpawn = useMemo(() => readHomeSpawn(), []);
-  const [ipCountry, setIpCountry] = useState<string | null>(null);
 
   const [started, setStarted] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [totalMicroUsdc, setTotalMicroUsdc] = useState(0);
-  const [currentBand, setCurrentBand] = useState<Band>('home');
-  const [secondsByBand, setSecondsByBand] = useState<Record<BandWithIdle, number>>({
-    home: 0,
-    near: 0,
-    away: 0,
-    idle: 0,
+  const [secondsByState, setSecondsByState] = useState<SecondsByState>({
+    plugged: 0,
+    unplugged: 0,
   });
-  const [spoofMode, setSpoofMode] = useState<SpoofMode>('off');
   const [result, setResult] = useState<SessionResult | null>(null);
 
   // Wallet-visibility panel state
@@ -297,130 +239,34 @@ export default function LiveDemo() {
     return () => clearInterval(id);
   }, [refreshGatewayBalance]);
 
-  const prevBandRef = useRef<Band>('home');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const spoofRef = useRef<SpoofMode>('off');
   const totalRef = useRef(0);
-  const bandsRef = useRef<Record<BandWithIdle, number>>({
-    home: 0,
-    near: 0,
-    away: 0,
-    idle: 0,
-  });
+  const stateRef = useRef<SecondsByState>({ plugged: 0, unplugged: 0 });
   const txHashesRef = useRef<string[]>([]);
-  // Live-signal refs: the interval reads these every tick, so mid-session
-  // movement and charger state always feed the scorer (a closure would
-  // capture stale values at setInterval time).
-  const positionRef = useRef<GeolocationPosition | null>(null);
+  // Live-signal ref: the interval reads this every tick, so mid-session
+  // charger toggles always feed the scorer (a closure would capture stale
+  // values at setInterval time).
   const chargingRef = useRef<boolean | null>(null);
-  const ipCountryRef = useRef<string | null>(null);
-  const devAllowed = useMemo(() => devAffordanceAllowed(), []);
-
-  useEffect(() => {
-    positionRef.current = geo.position;
-  }, [geo.position]);
 
   useEffect(() => {
     chargingRef.current = battery.charging;
   }, [battery.charging]);
 
   useEffect(() => {
-    ipCountryRef.current = ipCountry;
-  }, [ipCountry]);
-
-  useEffect(() => {
     if (!hasPassedGate()) {
       navigate('/', { replace: true });
-      return;
     }
-    if (!homeSpawn) navigate('/set-home', { replace: true });
-  }, [homeSpawn, navigate]);
+  }, [navigate]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchIpCountry(controller.signal).then(setIpCountry);
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    spoofRef.current = spoofMode;
-  }, [spoofMode]);
-
-  // Poll the buyer's USDC balance every 5s while this page is mounted.
-  // Runs regardless of session state so the user sees the post-session
-  // delta as well as pre-session baseline.
-  useEffect(() => {
-    if (!buyerAddress) return;
-    let cancelled = false;
-    const tick = async () => {
-      const b = await fetchBuyerUsdcBalance(rpcUrl, buyerAddress);
-      if (!cancelled) setBuyerBalance(b);
-    };
-    void tick();
-    const id = setInterval(() => {
-      void tick();
-    }, 5_000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [buyerAddress, rpcUrl]);
-
-  const batteryFactorLive =
-    battery.charging === false ? BATTERY_MULTIPLIER_UNPLUGGED : 1;
-  const currentRate = BAND_RATE_MICRO_USDC_PER_SEC[currentBand] * batteryFactorLive;
-  const currentMultiplier =
-    Math.round(
-      LOCATION_MULTIPLIER_BY_BAND[currentBand] * batteryFactorLive * 100,
-    ) / 100;
-
-  const realDistanceMeters = useMemo(() => {
-    if (!homeSpawn || !geo.position) return 0;
-    return haversineMeters(
-      { lat: homeSpawn.lat, lng: homeSpawn.lng },
-      {
-        lat: geo.position.coords.latitude,
-        lng: geo.position.coords.longitude,
-      },
-    );
-  }, [homeSpawn, geo.position]);
-
-  const effectiveDistanceMeters =
-    spoofMode === 'off'
-      ? realDistanceMeters
-      : SPOOF_PRESETS[spoofMode].distanceMeters;
-
-  const effectiveIpCountry =
-    spoofMode !== 'off' && SPOOF_PRESETS[spoofMode].overrideIpCountry
-      ? SPOOF_PRESETS[spoofMode].overrideIpCountry!
-      : ipCountry;
-
-  // Pre-session / idle display: keep the dial reactive to spoof toggles
-  // and live signals without the interval having to be running.
-  useEffect(() => {
-    if (started) return;
-    const s = scoreV2({
-      distanceMeters: effectiveDistanceMeters,
-      charging: battery.charging ?? undefined,
-      prevBand: currentBand,
-      ipCountry: effectiveIpCountry ?? undefined,
-      homeCountry: homeSpawn?.country ?? undefined,
-    });
-    if (s.band !== currentBand) {
-      prevBandRef.current = s.band;
-      setCurrentBand(s.band);
-    }
-  }, [
-    started,
-    effectiveDistanceMeters,
-    effectiveIpCountry,
-    battery.charging,
-    homeSpawn?.country,
-    currentBand,
-  ]);
+  const score = useMemo(
+    () => scoreV2({ charging: battery.charging ?? undefined }),
+    [battery.charging],
+  );
+  const currentRate = score.microUsdcPerSec;
+  const currentMultiplier = score.multiplier;
 
   const endSession = useCallback(
-    async (finalTotal: number, bands: Record<BandWithIdle, number>) => {
+    async (finalTotal: number, state: SecondsByState) => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -429,7 +275,7 @@ export default function LiveDemo() {
       try {
         const settlement = await settleSession(
           finalTotal,
-          bands,
+          state,
           [...txHashesRef.current],
         );
         txId = typeof settlement.txId === 'string' ? settlement.txId : '';
@@ -438,17 +284,9 @@ export default function LiveDemo() {
         // the per-second txHashes remain as the source of truth on-chain.
         console.error('[LiveDemo] settleSession failed', err);
       }
-      // SessionSummary's secondsByBand type only knows about the three
-      // rulebookV2 bands; fold idle seconds into `home` for display so
-      // we don't break the component contract.
-      const summaryBands: Record<Band, number> = {
-        home: bands.home + bands.idle,
-        near: bands.near,
-        away: bands.away,
-      };
       setResult({
         totalMicroUsdc: finalTotal,
-        secondsByBand: summaryBands,
+        secondsByState: state,
         txId,
         durationSeconds: SESSION_DURATION_SECONDS,
       });
@@ -488,55 +326,21 @@ export default function LiveDemo() {
     setStarted(true);
     setElapsed(0);
     setTotalMicroUsdc(0);
-    setSecondsByBand({ home: 0, near: 0, away: 0, idle: 0 });
+    setSecondsByState({ plugged: 0, unplugged: 0 });
     totalRef.current = 0;
-    bandsRef.current = { home: 0, near: 0, away: 0, idle: 0 };
+    stateRef.current = { plugged: 0, unplugged: 0 };
     txHashesRef.current = [];
-    prevBandRef.current = 'home';
-    setCurrentBand('home');
     setTxReceipts([]);
     setPolicyRemainingSeconds(policyDurationSeconds);
 
     const client = getGatewayClient();
 
     intervalRef.current = setInterval(() => {
-      const livePosition = positionRef.current;
-      const mode = spoofRef.current;
-      const distance =
-        mode === 'off'
-          ? homeSpawn && livePosition
-            ? haversineMeters(
-                { lat: homeSpawn.lat, lng: homeSpawn.lng },
-                {
-                  lat: livePosition.coords.latitude,
-                  lng: livePosition.coords.longitude,
-                },
-              )
-            : 0
-          : SPOOF_PRESETS[mode].distanceMeters;
-      const spoofedIp =
-        mode !== 'off' ? SPOOF_PRESETS[mode].overrideIpCountry : undefined;
-
-      const score = scoreV2({
-        distanceMeters: distance,
-        charging: chargingRef.current ?? undefined,
-        prevBand: prevBandRef.current,
-        ipCountry: spoofedIp ?? ipCountryRef.current ?? undefined,
-        homeCountry: homeSpawn?.country ?? undefined,
-      });
-      prevBandRef.current = score.band;
-
-      // Idle heuristic: no battery API signal AND no geolocation fix
-      // means the tab has no active-use evidence — route to /idle. When
-      // Agent C/D wire a real usage flag, replace this in place.
-      const isIdle =
-        chargingRef.current === null && positionRef.current === null;
-      const endpoint = endpointFor({
-        band: score.band,
-        charging: chargingRef.current === true,
-        idle: isIdle,
-      });
-      const bandKey: BandWithIdle = isIdle ? 'idle' : score.band;
+      // Treat unknown charging state as plugged-in (At Desk baseline) so
+      // Firefox/Safari don't get penalised.
+      const charging = chargingRef.current === false ? false : true;
+      const endpoint = endpointFor(charging);
+      const stateKey: keyof SecondsByState = charging ? 'plugged' : 'unplugged';
 
       // Fire-and-track: the interval tick doesn't await pay, but we chain
       // the bookkeeping onto the promise so totals only advance on
@@ -553,20 +357,17 @@ export default function LiveDemo() {
           }
           const charge = priceFor(endpoint);
           totalRef.current += charge;
-          bandsRef.current = {
-            ...bandsRef.current,
-            [bandKey]: bandsRef.current[bandKey] + 1,
+          stateRef.current = {
+            ...stateRef.current,
+            [stateKey]: stateRef.current[stateKey] + 1,
           };
           setTotalMicroUsdc(totalRef.current);
-          setSecondsByBand({ ...bandsRef.current });
+          setSecondsByState({ ...stateRef.current });
           setGatewayAvailableUsdc(prev => {
             if (prev === null) return prev;
             const next = Math.max(0, Number(prev) - charge / 1_000_000);
             return next.toFixed(6);
           });
-          // Append a receipt row for the wallet-visibility panel. Newest
-          // first, capped at 100 to avoid runaway DOM while a session is
-          // streaming ~60 pays.
           const receiptId = result.txHash || '';
           setTxReceipts(prev => {
             const next: TxReceipt[] = [
@@ -585,23 +386,22 @@ export default function LiveDemo() {
         }
       })();
 
-      setCurrentBand(score.band);
       setElapsed(prev => {
         const next = prev + 1;
         if (next >= SESSION_DURATION_SECONDS) {
-          void endSession(totalRef.current, { ...bandsRef.current });
+          void endSession(totalRef.current, { ...stateRef.current });
         }
         return next;
       });
       setPolicyRemainingSeconds(prev => {
         const next = Math.max(0, prev - 1);
         if (next === 0 && prev > 0) {
-          void endSession(totalRef.current, { ...bandsRef.current });
+          void endSession(totalRef.current, { ...stateRef.current });
         }
         return next;
       });
     }, 1_000);
-  }, [endSession, homeSpawn, policyDurationSeconds, laptopValueUsd]);
+  }, [endSession, policyDurationSeconds, laptopValueUsd]);
 
   useEffect(() => {
     return () => {
@@ -610,7 +410,7 @@ export default function LiveDemo() {
   }, []);
 
   const handleEarlyExit = useCallback(() => {
-    void endSession(totalRef.current, { ...bandsRef.current });
+    void endSession(totalRef.current, { ...stateRef.current });
   }, [endSession]);
 
   const handleRunAgain = useCallback(() => {
@@ -618,12 +418,27 @@ export default function LiveDemo() {
     setStarted(false);
     setElapsed(0);
     setTotalMicroUsdc(0);
-    setSecondsByBand({ home: 0, near: 0, away: 0, idle: 0 });
-    setSpoofMode('off');
-    prevBandRef.current = 'home';
+    setSecondsByState({ plugged: 0, unplugged: 0 });
     txHashesRef.current = [];
-    setCurrentBand('home');
   }, []);
+
+  // Poll the buyer's USDC balance every 5s while this page is mounted.
+  useEffect(() => {
+    if (!buyerAddress) return;
+    let cancelled = false;
+    const tick = async () => {
+      const b = await fetchBuyerUsdcBalance(rpcUrl, buyerAddress);
+      if (!cancelled) setBuyerBalance(b);
+    };
+    void tick();
+    const id = setInterval(() => {
+      void tick();
+    }, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [buyerAddress, rpcUrl]);
 
   if (result) {
     return (
@@ -647,9 +462,9 @@ export default function LiveDemo() {
         <div className="mb-6">
           <h1 className="font-bebas text-5xl tracking-wide">YOUR COVER</h1>
           <p className="text-[#888888] leading-relaxed mt-2">
-            You're covered while you have funds. Your rate stays low at your
-            desk and rises if you take your laptop out — top up any time to
-            keep the policy running.
+            You're covered while you have funds. Plug in at your desk for the
+            baseline rate; unplug and hit the road and it doubles — top up any
+            time to keep the policy running.
           </p>
         </div>
 
@@ -669,18 +484,10 @@ export default function LiveDemo() {
           lastDepositTxHash={lastDepositTxHash}
         />
 
-        <LiveSignalStrip
-          geoStatus={geo.status}
-          position={geo.position}
-          battery={battery}
-          homeSpawn={homeSpawn}
-          distanceMeters={effectiveDistanceMeters}
-          ipCountry={effectiveIpCountry}
-          spoofing={spoofMode !== 'off'}
-        />
+        <LiveSignalStrip battery={battery} />
 
         <div className="grid md:grid-cols-2 gap-4 mb-6">
-          <MultiplierDial band={currentBand} multiplier={currentMultiplier} />
+          <MultiplierDial charging={battery.charging} multiplier={currentMultiplier} />
           <LiveTicker
             balanceUsdc={gatewayAvailableUsdc}
             currentRateMicroUsdc={currentRate}
@@ -693,35 +500,22 @@ export default function LiveDemo() {
 
         <div className="flex flex-wrap gap-2 mb-6" data-testid="live-pills">
           <StatusPill
-            icon={<MapPin className="h-3 w-3" />}
-            label={
-              spoofMode !== 'off'
-                ? `spoof: ${SPOOF_PRESETS[spoofMode].label}`
-                : geo.status !== 'granted'
-                  ? `geolocation: ${geo.status}`
-                  : `${effectiveDistanceMeters < 1_000 ? `${Math.round(effectiveDistanceMeters)} m` : `${(effectiveDistanceMeters / 1_000).toFixed(1)} km`} from home`
-            }
-          />
-          <StatusPill
             icon={battery.charging ? <Plug className="h-3 w-3" /> : <Unplug className="h-3 w-3" />}
             label={
               !battery.supported
-                ? 'battery API unsupported'
+                ? 'battery API unsupported — assuming At Desk'
                 : battery.charging === null
                   ? 'battery pending…'
                   : battery.charging
-                    ? 'plugged in'
-                    : 'on battery'
+                    ? 'at desk · plugged in'
+                    : 'on the move · on battery'
             }
+          />
+          <StatusPill
+            icon={<Plug className="h-3 w-3" />}
+            label={`elapsed: ${elapsed}s`}
             muted
           />
-          {effectiveIpCountry && homeSpawn?.country && (
-            <StatusPill
-              icon={<Zap className="h-3 w-3" />}
-              label={`IP: ${effectiveIpCountry} · home: ${homeSpawn.country}`}
-              muted
-            />
-          )}
         </div>
 
         {!started ? (
@@ -803,7 +597,7 @@ export default function LiveDemo() {
             <button
               type="button"
               onClick={startSession}
-              disabled={!homeSpawn || policyPurchasing}
+              disabled={policyPurchasing}
               className="flex-1 bg-[#e8a020] text-[#080808] font-dm-mono uppercase text-sm tracking-widest py-4 hover:bg-[#f5b530] transition-colors disabled:bg-[#1a1a1a] disabled:text-[#444444] flex items-center justify-center gap-2"
               data-testid="start-session"
             >
@@ -821,79 +615,13 @@ export default function LiveDemo() {
               Pause cover
             </button>
           )}
-
         </div>
-
-        {devAllowed && (
-          <div className="mt-6 border border-[#1e1e1e] bg-[#0e0e0e] p-4">
-            <div className="text-xs uppercase tracking-widest text-[#666666] mb-3 font-dm-mono">
-              Location override (dev)
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <SpoofButton
-                active={spoofMode === 'off'}
-                onClick={() => setSpoofMode('off')}
-                label="Real"
-                testId="spoof-off"
-              />
-              <SpoofButton
-                active={spoofMode === 'near'}
-                onClick={() => setSpoofMode('near')}
-                label="Near (4 m)"
-                testId="spoof-near"
-              />
-              <SpoofButton
-                active={spoofMode === 'away'}
-                onClick={() => setSpoofMode('away')}
-                label="Away (10 m)"
-                testId="spoof-away"
-              />
-              <SpoofButton
-                active={spoofMode === 'international'}
-                onClick={() => setSpoofMode('international')}
-                label="International"
-                testId="spoof-international"
-              />
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );
 }
 
-function SpoofButton({
-  active,
-  onClick,
-  label,
-  testId,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  testId: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid={testId}
-      className={`px-4 py-2 font-dm-mono uppercase text-xs tracking-widest border transition-colors ${
-        active
-          ? 'bg-[#e8a020] border-[#e8a020] text-[#080808]'
-          : 'border-[#1e1e1e] text-[#888888] hover:text-[#f0f0f0] hover:border-[#666666]'
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
 function LiveHeader({ sessionActive = false }: { sessionActive?: boolean }) {
-  // Back nav is always visible. We keep it enabled mid-session too — React
-  // Router unmounts this component on nav, the cleanup effect clears the
-  // interval, and any in-flight pay() just settles into the void. Users who
-  // want to stop cleanly have "End session early"; this is the escape hatch.
   return (
     <nav className="border-b border-[#1a1a1a] px-8 py-4 flex items-center justify-between">
       <div className="flex items-center gap-4">
@@ -939,35 +667,15 @@ function StatusPill({
 }
 
 /**
- * Always-on live-signal strip above the dials so it's visible, before
- * the session even starts, that the Geolocation + Battery hooks are
- * actually receiving data from the browser.
+ * Live-signal strip above the dials so it's visible — before the session
+ * even starts — that the Battery API is receiving data from the browser.
  */
 function LiveSignalStrip({
-  geoStatus,
-  position,
   battery,
-  homeSpawn,
-  distanceMeters,
-  ipCountry,
-  spoofing,
 }: {
-  geoStatus: string;
-  position: GeolocationPosition | null;
   battery: { supported: boolean; charging: boolean | null; level: number | null };
-  homeSpawn: { lat: number; lng: number; country?: string } | null;
-  distanceMeters: number;
-  ipCountry: string | null;
-  spoofing: boolean;
 }) {
-  const geoDot = spoofing
-    ? 'bg-[#e8a020]'
-    : geoStatus === 'granted'
-      ? 'bg-[#34d399]'
-      : geoStatus === 'pending'
-        ? 'bg-[#e8a020] animate-pulse'
-        : 'bg-[#ef4444]';
-  const batteryDot = !battery.supported
+  const dotClass = !battery.supported
     ? 'bg-[#666666]'
     : battery.charging === null
       ? 'bg-[#e8a020] animate-pulse'
@@ -977,68 +685,32 @@ function LiveSignalStrip({
 
   return (
     <div
-      className="border border-[#1e1e1e] bg-[#0e0e0e] px-4 py-3 mb-4 grid gap-3 md:grid-cols-3 font-dm-mono text-xs"
+      className="border border-[#1e1e1e] bg-[#0e0e0e] px-4 py-3 mb-4 font-dm-mono text-xs"
       data-testid="live-signals"
     >
-      <SignalRow
-        dotClass={geoDot}
-        title="LOCATION"
-        line1={
-          spoofing
-            ? 'simulated location'
-            : geoStatus === 'granted'
-              ? 'at your desk'
-              : geoStatus === 'denied'
-                ? 'location off'
-                : geoStatus === 'pending'
-                  ? 'checking…'
-                  : geoStatus
-        }
-        line2={
-          distanceMeters < 1_000
-            ? `${Math.round(distanceMeters)} m from home`
-            : `${(distanceMeters / 1_000).toFixed(2)} km from home`
-        }
-        line3={
-          position
-            ? `accuracy ±${Math.round(position.coords.accuracy)} m`
-            : 'waiting for signal'
-        }
-      />
-      <SignalRow
-        dotClass={batteryDot}
-        title="POWER"
-        line1={
-          !battery.supported
-            ? 'battery info unavailable'
-            : battery.charging === null
-              ? 'checking…'
-              : battery.charging
-                ? 'plugged in'
-                : 'on battery'
-        }
-        line2={
-          battery.level !== null
-            ? `${Math.round(battery.level * 100)}% charge`
-            : 'charge unknown'
-        }
-        line3={
-          battery.charging === false
-            ? 'higher risk · rate doubled'
-            : 'safe · normal rate'
-        }
-      />
-      <SignalRow
-        dotClass={ipCountry ? 'bg-[#34d399]' : 'bg-[#666666]'}
-        title="NETWORK"
-        line1={ipCountry ? `connected from ${ipCountry}` : 'checking network…'}
-        line2={homeSpawn?.country ? `home country: ${homeSpawn.country}` : 'home country unset'}
-        line3={
-          ipCountry && homeSpawn?.country && ipCountry !== homeSpawn.country
-            ? 'abroad · treated as away'
-            : 'at home country'
-        }
-      />
+      <div className="flex items-center gap-2 uppercase tracking-widest text-[#888888]">
+        <span className={`inline-block w-2 h-2 rounded-full ${dotClass}`} />
+        Power
+      </div>
+      <div className="text-[#f0f0f0] mt-2">
+        {!battery.supported
+          ? 'battery info unavailable — defaulting to At Desk'
+          : battery.charging === null
+            ? 'checking…'
+            : battery.charging
+              ? 'at desk · plugged in'
+              : 'on the move · on battery'}
+      </div>
+      <div className="text-[#888888]">
+        {battery.level !== null
+          ? `${Math.round(battery.level * 100)}% charge`
+          : 'charge unknown'}
+      </div>
+      <div className="text-[#555555]">
+        {battery.charging === false
+          ? 'higher risk · rate doubled'
+          : 'baseline risk · normal rate'}
+      </div>
     </div>
   );
 }
@@ -1047,8 +719,7 @@ function LiveSignalStrip({
  * Always-visible wallet panel. Shows the buyer/seller addresses used by the
  * x402 flow, the live buyer USDC balance polled from Arc RPC, the network,
  * and a rolling tx-receipt log populated by each successful pay() during a
- * session. GatewayClient v1.0.5 does not expose a public .balance() method,
- * so the Gateway-balance row is intentionally omitted rather than faked.
+ * session.
  */
 function WalletPanel({
   open,
@@ -1272,32 +943,6 @@ function WalletRow({
           <Copy className="h-3 w-3" />
         </button>
       )}
-    </div>
-  );
-}
-
-function SignalRow({
-  dotClass,
-  title,
-  line1,
-  line2,
-  line3,
-}: {
-  dotClass: string;
-  title: string;
-  line1: string;
-  line2: string;
-  line3: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-center gap-2 uppercase tracking-widest text-[#888888]">
-        <span className={`inline-block w-2 h-2 rounded-full ${dotClass}`} />
-        {title}
-      </div>
-      <div className="text-[#f0f0f0] mt-2">{line1}</div>
-      <div className="text-[#888888]">{line2}</div>
-      <div className="text-[#555555]">{line3}</div>
     </div>
   );
 }

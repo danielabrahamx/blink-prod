@@ -23,6 +23,16 @@ export default function InsuracleDashboardAdmin({ setUserType }: BlinkReserveDas
   const [adminUsdcBalance, setAdminUsdcBalance] = useState<string>('0');
   const [adminUsycBalance, setAdminUsycBalance] = useState<string>('0');
 
+  // Live premium counter (from backend /api/health — updates per x402 tick)
+  const [serverPremiumsUsdc, setServerPremiumsUsdc] = useState<number | null>(null);
+  const [recentTxs, setRecentTxs] = useState<Array<{
+    timestamp: string;
+    path: string;
+    premiumMicroUsdc: number;
+    txPayer?: string;
+    txHash?: string;
+  }>>([]);
+
   // Contract state
   const [contractUsdcPool, setContractUsdcPool] = useState<string>('0');
   const [contractUsycReserve, setContractUsycReserve] = useState<string>('0');
@@ -73,8 +83,35 @@ export default function InsuracleDashboardAdmin({ setUserType }: BlinkReserveDas
     }
   };
 
+  // Live premium feed: poll /api/health every 3s so the admin sees the
+  // in-memory counter update on every accepted x402 payment, well before
+  // the on-chain seller-wallet balance settles. Skip in demo mode (no
+  // backend) and on transient network errors.
+  const fetchHealth = async () => {
+    if (DEMO_MODE) return;
+    try {
+      const { data } = await axios.get(`${API_BASE}/api/health`);
+      if (typeof data?.totalPremiumsUsdc === 'number') {
+        setServerPremiumsUsdc(data.totalPremiumsUsdc);
+      }
+      if (Array.isArray(data?.lastTxs)) {
+        setRecentTxs(data.lastTxs.slice(-100).reverse());
+      }
+    } catch {
+      // Stay silent — fetchData() already surfaces a backend-down error.
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchHealth();
+    if (DEMO_MODE) return;
+    const healthId = window.setInterval(fetchHealth, 3000);
+    const balanceId = window.setInterval(fetchData, 8000);
+    return () => {
+      window.clearInterval(healthId);
+      window.clearInterval(balanceId);
+    };
   }, []);
 
   // --- Deposit USYC to reserve ---
@@ -197,8 +234,11 @@ export default function InsuracleDashboardAdmin({ setUserType }: BlinkReserveDas
               <div className="bg-[#141414] border border-[#1e1e1e] px-4 py-3">
                 <div className="text-xs text-[#444444] uppercase tracking-widest mb-1">Collected premiums</div>
                 <div className="font-dm-mono text-lg text-[#e8a020]">
-                  {parseFloat(adminUsdcBalance).toFixed(4)}
+                  {(serverPremiumsUsdc ?? parseFloat(adminUsdcBalance)).toFixed(6)}
                   <span className="text-[#555555] text-xs ml-1">USDC</span>
+                </div>
+                <div className="text-[10px] text-[#444444] mt-1 font-dm-mono">
+                  on-chain: {parseFloat(adminUsdcBalance).toFixed(6)} USDC
                 </div>
               </div>
               <div className="bg-[#141414] border border-[#1e1e1e] px-4 py-3">
@@ -209,6 +249,44 @@ export default function InsuracleDashboardAdmin({ setUserType }: BlinkReserveDas
                 </div>
               </div>
             </div>
+
+            {!DEMO_MODE && recentTxs.length > 0 && (
+              <div className="mt-4 border border-[#1a1a1a] bg-[#080808]">
+                <div className="px-3 py-2 border-b border-[#1a1a1a] flex items-center justify-between">
+                  <span className="text-[10px] uppercase tracking-widest text-[#666666]">
+                    Recent x402 receipts
+                  </span>
+                  <span className="text-[10px] font-dm-mono text-[#444444]">
+                    {recentTxs.length} total
+                  </span>
+                </div>
+                <ul
+                  className="divide-y divide-[#1a1a1a] overflow-y-auto"
+                  style={{ maxHeight: 180 }}
+                  data-testid="admin-recent-receipts"
+                >
+                  {recentTxs.slice(0, 20).map((tx, i) => (
+                    <li
+                      key={`${tx.txHash || tx.timestamp}-${i}`}
+                      className="px-3 py-1.5 flex items-center gap-2 text-[11px] font-dm-mono"
+                    >
+                      <span className="text-[#555555] tabular-nums w-14 truncate">
+                        {new Date(tx.timestamp).toLocaleTimeString([], { hour12: false })}
+                      </span>
+                      <span className="text-[#888888] truncate flex-1">
+                        {tx.path?.replace('/api/insure/', '') || '—'}
+                      </span>
+                      <span className="text-[#e8a020] tabular-nums">
+                        +{tx.premiumMicroUsdc} µUSDC
+                      </span>
+                      <span className="text-[#444444] tabular-nums w-20 truncate text-right">
+                        {tx.txHash ? `${tx.txHash.slice(0, 6)}…${tx.txHash.slice(-4)}` : '—'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 

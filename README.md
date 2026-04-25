@@ -54,18 +54,19 @@ npm install
 cp .env.example .env   # then fill in Circle creds + addresses
 npm start
 
-# terminal 2 — frontend (defaults to :8080, falls back to :8081)
+# terminal 2 — frontend (defaults to :5173)
 cd frontend
 bun install            # or: npm install
 bun run dev
 ```
 
-Visit http://localhost:8080:
+Visit http://localhost:5173:
 
-- `/` — landing + email gate
-- `/set-home` — set your home base (lat/lng)
-- `/live` — customer policy flow
-- `/admin` — seller pool dashboard
+- `/` — landing + email gate; "Try the Live Demo" jumps straight
+  into `/live`, "Admin Portal" opens the inline reserve dashboard.
+- `/live` — customer policy flow + 60-second session
+- `/admin/gateway` — Circle wallet + on-chain seller-pool dashboard
+- `/admin/metrics` — pilot metrics panel
 
 ## Env config
 
@@ -102,70 +103,60 @@ VITE_BLINK_CONTRACT_ADDRESS=0xFC1EfCE3D25E7eE5535E7E6D6731D9Ba131bDC43
    subsequent policy buy is a single tx.
 4. During the session, each tick routes a µUSDC payment through Circle
    Gateway to the seller wallet via the rate-matched endpoint
-   (`/api/insure/home-charging`, `…/away-battery`, etc).
+   (`/api/insure/charging` when plugged in, `/api/insure/battery` when
+   on battery).
 5. At the end of the session, `/api/settle` posts a summary and
-   surfaces the `txId` + per-band breakdown.
+   surfaces the `txId` + plugged-vs-unplugged second breakdown.
 
 ## Rating model
 
-Two compounding factors:
+One factor: **charging state**. Plugged in (At Desk) is the baseline;
+on battery (On The Move) doubles the rate. In the live demo narration
+plug/unplug stands in as a proxy for at-desk-vs-on-the-move so judges
+who can't physically move during the pitch can still trigger a visible
+rate change.
 
-**Location band** (haversine distance to home, with international-IP
-override):
+| State                      | Endpoint                  | Rate (µUSDC/sec) | Multiplier |
+|----------------------------|---------------------------|------------------|------------|
+| Plugged in (At Desk)       | `/api/insure/charging`    | 3                | 1.00×      |
+| On battery (On The Move)   | `/api/insure/battery`     | 6                | 2.00×      |
+| Unknown (Firefox/Safari)   | `/api/insure/charging`    | 3                | 1.00×      |
 
-| Band   | Trigger                              | Rate (µUSDC/sec) |
-|--------|--------------------------------------|------------------|
-| `home` | within 2 m of home                   | 3                |
-| `near` | 2 m – 5 m                            | 4                |
-| `away` | > 5 m, or IP country ≠ home country  | 6                |
-
-Demo-scale thresholds (metres) so the away band is reachable by walking
-a few paces. 1 m hysteresis prevents flicker; outdoor GPS is typically
-3–10 m accurate.
-
-**Charging state** (multiplies the band rate):
-
-| State       | Factor |
-|-------------|--------|
-| Plugged in  | 1.00×  |
-| On battery  | 2.00×  |
-| Unknown     | 1.00×  |
-
-Compounding: `home + on battery` = 6 µUSDC/sec, `away + on battery`
-= 12 µUSDC/sec.
+Browsers without the Battery Status API (Firefox, Safari) collapse to
+the plugged-in baseline so they're never penalised.
 
 All accrual is integer µUSDC (USDC's 6-decimal floor). USD values are
 display only — nothing settles in fiat.
 
-## Admin flow (`/admin`)
+## Admin flow
 
-- **Seller wallet** card — the pool address + DCV wallet ID
-- **Seller pool · on-chain** — live Arc RPC reads of the seller's USDC
-  and USYC balances (polled every 10s)
-- **Circle Gateway / DCV balances** — server-side Circle API view
-  (reserved / spendable)
-- **Top up USYC reserve** — approves the Blink contract, then calls
-  `depositReserve(amount)` signed by the Circle DCV wallet
-- **Recent x402 receipts** — last N per-second charges from
-  `/api/health` (refreshed every 5s), with total premiums in USDC
+Two admin surfaces:
+
+- **Inline admin portal** (landing → "Admin Portal" button) renders
+  `InsuracleDashboardAdmin`. Shows the seller / Circle DCV pool address,
+  a **live `Collected premiums` counter** that polls
+  `/api/health.totalPremiumsUsdc` every 3 s (so it ticks up on every
+  accepted x402 payment, well before the on-chain balance settles), the
+  USYC on-hand figure, the contract reserve, and a recent-receipts list
+  (timestamp + endpoint + µUSDC + tx hash, last 20 visible).
+  USYC top-up and claim-trigger forms live here too.
+- **`/admin/gateway`** (footer link) — a deeper dashboard with the
+  on-chain seller-wallet polling (every 10 s), Circle DCV wallet token
+  breakdown, and the same `lastTxs` feed (every 5 s).
 
 ## Backend routes
 
-| Method | Path                               | Billing   | Purpose                          |
-|--------|------------------------------------|-----------|----------------------------------|
-| GET    | `/api/insure/home-charging`        | 3 µUSDC   | Per-sec charge, home, plugged    |
-| GET    | `/api/insure/home-battery`         | 6 µUSDC   | Per-sec charge, home, unplugged  |
-| GET    | `/api/insure/near-charging`        | 4 µUSDC   | Per-sec charge, near, plugged    |
-| GET    | `/api/insure/near-battery`         | 8 µUSDC   | Per-sec charge, near, unplugged  |
-| GET    | `/api/insure/away-charging`        | 6 µUSDC   | Per-sec charge, away, plugged    |
-| GET    | `/api/insure/away-battery`         | 12 µUSDC  | Per-sec charge, away, unplugged  |
-| GET    | `/api/insure/idle`                 | 1 µUSDC   | Idle fallback                    |
-| GET    | `/api/health`                      | free      | Uptime + recent tx receipts      |
-| GET    | `/api/status`                      | free      | Pool/contract state snapshot     |
-| POST   | `/api/settle`                      | free      | Session settlement summary       |
-| GET    | `/api/admin/balance/{address}`     | free      | USDC + USYC via Arc RPC          |
-| GET    | `/api/admin/wallet-balance`        | free      | Circle DCV wallet balances       |
-| POST   | `/api/admin/deposit-reserve`       | free      | Top up USYC reserve via DCV      |
+| Method | Path                               | Billing   | Purpose                                |
+|--------|------------------------------------|-----------|----------------------------------------|
+| GET    | `/api/insure/charging`             | 3 µUSDC   | Per-sec charge, plugged in (At Desk)   |
+| GET    | `/api/insure/battery`              | 6 µUSDC   | Per-sec charge, on battery (On The Move) |
+| GET    | `/api/health`                      | free      | Uptime + `totalPremiumsUsdc` + `lastTxs` |
+| GET    | `/api/status`                      | free      | Pool/contract state snapshot           |
+| POST   | `/api/settle`                      | free      | Session settlement summary             |
+| GET    | `/api/balance/:address`            | free      | USDC + USYC via Arc RPC (alias)        |
+| GET    | `/api/admin/balance/:address`      | free      | USDC + USYC via Arc RPC                |
+| GET    | `/api/admin/wallet-balance`        | free      | Circle DCV wallet balances             |
+| POST   | `/api/admin/deposit-reserve`       | free      | Top up USYC reserve via DCV            |
 
 ## Tests
 
@@ -174,22 +165,27 @@ cd frontend
 bun run test
 ```
 
-Unit coverage lives in `frontend/src/lib/**/__tests__` (rulebook,
-battery, geolocation, homeSpawn) and `frontend/src/pages/__tests__`
-(LiveDemo).
+Unit coverage in `frontend/src/lib/**/__tests__` (rulebook, battery)
+and `frontend/src/pages/__tests__` (LiveDemo end-to-end with battery
+mocks and the simulation gateway).
 
 ## Key files
 
 - `frontend/src/pages/LiveDemo.tsx` — customer policy flow + live session
-- `frontend/src/pages/Admin.tsx` — seller pool dashboard
+- `frontend/src/pages/Admin.tsx` — seller pool dashboard at `/admin/gateway`
+- `frontend/src/InsuracleDashboardAdmin.tsx` — inline admin portal with
+  the live premium feed
 - `frontend/src/lib/blinkContract.ts` — `buyInsurance` / `hasActivePolicy`
   against the Blink contract
 - `frontend/src/lib/gatewayClient.ts` — chooses real Circle Gateway vs
   simulation
 - `frontend/src/lib/simulationClient.ts` — demo-mode fake gateway
-- `frontend/src/lib/rulebookV2.ts` — location band + charging scorer
+- `frontend/src/lib/rulebookV2.ts` — charging-state scorer
+- `frontend/src/lib/battery.ts` — Battery Status API hook
 - `backend/server.js` — Express + x402-batching middleware + admin routes
 - `backend/blink-contract-abi.json` — compiled ABI for the Blink contract
+- `scripts/demo-real-txs.mjs` — round-robins the two priced endpoints
+  for 60 real x402 testnet payments
 - `netlify.toml` — flips `VITE_DEMO_MODE=true` in production
 
 ## Tokens & contracts (Arc Testnet)

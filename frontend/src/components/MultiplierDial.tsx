@@ -1,49 +1,45 @@
-import type { Band } from '@/lib/rulebookV2';
-
 interface Props {
-  band: Band;
+  charging: boolean | null;
   multiplier: number;
 }
 
-const BAND_LABEL: Record<Band, string> = {
-  home: 'HOME',
-  near: 'NEAR',
-  away: 'AWAY',
-};
+function labelFor(charging: boolean | null): string {
+  if (charging === null) return 'AT DESK';
+  return charging ? 'AT DESK' : 'ON THE MOVE';
+}
 
-const BAND_COLOR: Record<Band, string> = {
-  home: '#34d399',
-  near: '#e8a020',
-  away: '#ef4444',
-};
+function colorFor(charging: boolean | null): string {
+  return charging === false ? '#e8a020' : '#34d399';
+}
 
-const BAND_CAPTION: Record<Band, string> = {
-  home: 'Within 200 m of your home base',
-  near: 'Up to 50 km from home',
-  away: 'Far from home or international traffic',
-};
+function captionFor(charging: boolean | null): string {
+  if (charging === null) return 'Plug state pending — assuming at desk';
+  return charging
+    ? 'Plugged in · baseline rate'
+    : 'On battery · rate doubles (proxy for being on the move)';
+}
 
-export function MultiplierDial({ band, multiplier }: Props) {
+export function MultiplierDial({ charging, multiplier }: Props) {
   return (
     <div
       className="border border-[#1e1e1e] bg-[#0e0e0e] p-8 transition-colors"
       data-testid="multiplier-dial"
-      data-band={band}
+      data-charging={charging === null ? 'unknown' : charging ? 'plugged' : 'battery'}
     >
       <div className="text-xs uppercase tracking-widest text-[#666666] mb-3">
-        Current band
+        Current state
       </div>
       <div
         className="font-bebas text-6xl leading-none tracking-widest"
-        style={{ color: BAND_COLOR[band] }}
+        style={{ color: colorFor(charging) }}
       >
-        {BAND_LABEL[band]}
+        {labelFor(charging)}
       </div>
       <div className="font-dm-mono text-4xl text-[#f0f0f0] mt-4">
         {multiplier.toFixed(2)}×
       </div>
       <p className="text-[#666666] text-sm mt-4 leading-relaxed">
-        {BAND_CAPTION[band]}
+        {captionFor(charging)}
       </p>
     </div>
   );

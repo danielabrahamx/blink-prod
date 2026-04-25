@@ -6,7 +6,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import AdminEntry from "./pages/AdminEntry";
-import SetHome from "./pages/SetHome";
 import LiveDemo from "./pages/LiveDemo";
 import Admin from "./pages/Admin";
 import { PolicyInspector, Replay, MetricsPanel, PolicyExport } from "@/admin";
@@ -21,7 +20,6 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          <Route path="/set-home" element={<SetHome />} />
           <Route path="/live" element={<LiveDemo />} />
           <Route path="/admin/gateway" element={<Admin />} />
 

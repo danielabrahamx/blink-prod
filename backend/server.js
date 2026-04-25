@@ -63,15 +63,13 @@ const gateway = createGatewayMiddleware({
   networks: ['eip155:5042002'], // Arc Testnet only
 });
 
-// --- Billed route definitions (band, charging, priceStr, priceUsdc) ---
+// --- Billed route definitions ---
+// Two priced endpoints — charging state is the only rating factor.
+// /charging (plugged in, At Desk): baseline 3 µ-USDC/sec.
+// /battery  (on battery, On The Move): 6 µ-USDC/sec (2× baseline).
 const BILLED = [
-  { path: '/api/insure/home-charging',  band: 'home',  charging: true,  price: '$0.000003',  priceUsdc: 0.000003  },
-  { path: '/api/insure/home-battery',   band: 'home',  charging: false, price: '$0.000006',  priceUsdc: 0.000006  },
-  { path: '/api/insure/near-charging',  band: 'near',  charging: true,  price: '$0.000004',  priceUsdc: 0.000004  },
-  { path: '/api/insure/near-battery',   band: 'near',  charging: false, price: '$0.000008',  priceUsdc: 0.000008  },
-  { path: '/api/insure/away-charging',  band: 'away',  charging: true,  price: '$0.000006',  priceUsdc: 0.000006  },
-  { path: '/api/insure/away-battery',   band: 'away',  charging: false, price: '$0.000012',  priceUsdc: 0.000012  },
-  { path: '/api/insure/idle',           band: 'idle',  charging: false, price: '$0.00001',   priceUsdc: 0.00001   },
+  { path: '/api/insure/charging', charging: true,  price: '$0.000003', priceUsdc: 0.000003 },
+  { path: '/api/insure/battery',  charging: false, price: '$0.000006', priceUsdc: 0.000006 },
 ];
 
 for (const route of BILLED) {
@@ -80,7 +78,6 @@ for (const route of BILLED) {
     const premiumMicroUsdc = Math.round(route.priceUsdc * 1e6);
     const payload = {
       ok: true,
-      band: route.band,
       charging: route.charging,
       premiumMicroUsdc,
       txPayer: req.payment?.payer,
@@ -258,13 +255,13 @@ app.post('/api/admin/deposit-reserve', async (req, res) => {
 });
 
 app.post('/api/settle', (req, res) => {
-  const { totalMicroUsdc = 0, bands = [], txHashes = [] } = req.body || {};
+  const { totalMicroUsdc = 0, state = {}, txHashes = [] } = req.body || {};
   const receiptId = randomHex(16);
   res.json({
     settled: true,
     receiptId,
     totalMicroUsdc,
-    bands,
+    state,
     txHashes,
     timestamp: new Date().toISOString(),
   });

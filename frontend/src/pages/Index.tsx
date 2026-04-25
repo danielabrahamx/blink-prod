@@ -73,7 +73,7 @@ const Index = () => {
 
           {/* Live demo card */}
           <button
-            onClick={() => navigate('/set-home')}
+            onClick={() => navigate('/live')}
             className="group text-left bg-[#0e0e0e] border border-[#1e1e1e] hover:border-[#e8a020] p-8 transition-all duration-200"
             data-testid="cta-live-demo"
           >
@@ -85,12 +85,12 @@ const Index = () => {
             </div>
             <h2 className="font-bebas text-3xl tracking-widest mb-2 text-[#f0f0f0]">TRY THE LIVE DEMO</h2>
             <p className="text-[#666666] text-sm leading-relaxed">
-              Set your home base, then run a 60-second session where your
-              premium reacts to your real location. Simulation only — no wallet,
-              no gas, no sign-up beyond the gate you just passed.
+              Run a 60-second session where your premium reacts to whether
+              your laptop is at your desk (plugged in) or on the move (on
+              battery). Unplug mid-session to see the rate double.
             </p>
             <div className="mt-6 pt-4 border-t border-[#1a1a1a]">
-              <span className="font-dm-mono text-xs text-[#444444]">From £6/month at home · scales up when you travel</span>
+              <span className="font-dm-mono text-xs text-[#444444]">At Desk baseline · 2× On The Move</span>
             </div>
           </button>
 
@@ -141,7 +141,7 @@ const Index = () => {
                 <span className="text-xs uppercase tracking-widest text-[#888888]">Two Risk Modes</span>
               </div>
               <p className="text-[#555555] text-sm leading-relaxed">
-                At your desk or left somewhere. Different rates that match your laptop's real-time risk.
+                At Desk or On The Move. Different rates that match your laptop's real-time risk.
               </p>
             </div>
 
